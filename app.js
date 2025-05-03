@@ -19,12 +19,18 @@ let isRecording = false;
 let audioBuffer = new Float32Array(config.bufferSize);
 let audioBufferIndex = 0;
 let featureHistory = {
-    ul: Array(100).fill(0),
-    ll: Array(100).fill(0),
-    li: Array(100).fill(0),
-    tt: Array(100).fill(0),
-    tb: Array(100).fill(0),
-    td: Array(100).fill(0),
+    ul_x: Array(100).fill(0),
+    ul_y: Array(100).fill(0),
+    ll_x: Array(100).fill(0),
+    ll_y: Array(100).fill(0),
+    li_x: Array(100).fill(0),
+    li_y: Array(100).fill(0),
+    tt_x: Array(100).fill(0),
+    tt_y: Array(100).fill(0),
+    tb_x: Array(100).fill(0),
+    tb_y: Array(100).fill(0),
+    td_x: Array(100).fill(0),
+    td_y: Array(100).fill(0),
     pitch: Array(100).fill(0),
     loudness: Array(100).fill(0)
 };
@@ -65,10 +71,10 @@ async function initOnnxRuntime() {
       // Use locally hosted WASM files
       if (window.ort && window.ort.env && window.ort.env.wasm) {
         ort.env.wasm.wasmPaths = {
-          'ort-wasm.wasm': '../wasm/ort-wasm.wasm',
-          'ort-wasm-simd.wasm': '../wasm/ort-wasm-simd.wasm',
-          'ort-wasm-threaded.wasm': '../wasm/ort-wasm-threaded.wasm',
-          'ort-wasm-simd-threaded.wasm': '../wasm/ort-wasm-simd-threaded.wasm'
+          'ort-wasm.wasm': 'wasm/ort-wasm.wasm',
+          'ort-wasm-simd.wasm': 'wasm/ort-wasm-simd.wasm',
+          'ort-wasm-threaded.wasm': 'wasm/ort-wasm-threaded.wasm',
+          'ort-wasm-simd-threaded.wasm': 'wasm/ort-wasm-simd-threaded.wasm'
         };
         
         console.log("Local WASM paths set for ONNX Runtime");
@@ -80,7 +86,7 @@ async function initOnnxRuntime() {
         graphOptimizationLevel: 'all'
       };
       
-      const modelPath = '../models/wavlm_base_layer9_quantized.onnx';
+      const modelPath = 'models/wavlm_base_layer9_quantized.onnx';
       const wavlmSession = await ort.InferenceSession.create(modelPath, options);
       
       console.log("WavLM model loaded successfully");
@@ -132,39 +138,92 @@ function setupCharts() {
         data: {
             labels: Array(100).fill(''),
             datasets: [
+                // Upper Lip
                 {
-                    label: 'Upper Lip',
-                    data: featureHistory.ul,
+                    label: 'Upper Lip X',
+                    data: featureHistory.ul_x,
+                    borderColor: 'rgb(255, 99, 132)',
+                    tension: 0.2,
+                    borderDash: [5, 5] // Dashed line for X values
+                },
+                {
+                    label: 'Upper Lip Y',
+                    data: featureHistory.ul_y,
                     borderColor: 'rgb(255, 99, 132)',
                     tension: 0.2
                 },
+                
+                // Lower Lip
                 {
-                    label: 'Lower Lip',
-                    data: featureHistory.ll,
+                    label: 'Lower Lip X',
+                    data: featureHistory.ll_x,
+                    borderColor: 'rgb(54, 162, 235)',
+                    tension: 0.2,
+                    borderDash: [5, 5]
+                },
+                {
+                    label: 'Lower Lip Y',
+                    data: featureHistory.ll_y,
                     borderColor: 'rgb(54, 162, 235)',
                     tension: 0.2
                 },
+                
+                // Lower Incisor
                 {
-                    label: 'Lower Incisor',
-                    data: featureHistory.li,
+                    label: 'Lower Incisor X',
+                    data: featureHistory.li_x,
+                    borderColor: 'rgb(255, 206, 86)',
+                    tension: 0.2,
+                    borderDash: [5, 5]
+                },
+                {
+                    label: 'Lower Incisor Y',
+                    data: featureHistory.li_y,
                     borderColor: 'rgb(255, 206, 86)',
                     tension: 0.2
                 },
+                
+                // Tongue Tip
                 {
-                    label: 'Tongue Tip',
-                    data: featureHistory.tt,
+                    label: 'Tongue Tip X',
+                    data: featureHistory.tt_x,
+                    borderColor: 'rgb(75, 192, 192)',
+                    tension: 0.2,
+                    borderDash: [5, 5]
+                },
+                {
+                    label: 'Tongue Tip Y',
+                    data: featureHistory.tt_y,
                     borderColor: 'rgb(75, 192, 192)',
                     tension: 0.2
                 },
+                
+                // Tongue Blade
                 {
-                    label: 'Tongue Blade',
-                    data: featureHistory.tb,
+                    label: 'Tongue Blade X',
+                    data: featureHistory.tb_x,
+                    borderColor: 'rgb(153, 102, 255)',
+                    tension: 0.2,
+                    borderDash: [5, 5]
+                },
+                {
+                    label: 'Tongue Blade Y',
+                    data: featureHistory.tb_y,
                     borderColor: 'rgb(153, 102, 255)',
                     tension: 0.2
                 },
+                
+                // Tongue Dorsum
                 {
-                    label: 'Tongue Dorsum',
-                    data: featureHistory.td,
+                    label: 'Tongue Dorsum X',
+                    data: featureHistory.td_x,
+                    borderColor: 'rgb(255, 159, 64)',
+                    tension: 0.2,
+                    borderDash: [5, 5]
+                },
+                {
+                    label: 'Tongue Dorsum Y',
+                    data: featureHistory.td_y,
                     borderColor: 'rgb(255, 159, 64)',
                     tension: 0.2
                 }
@@ -178,6 +237,17 @@ function setupCharts() {
                 y: {
                     min: -2,
                     max: 2
+                }
+            },
+            plugins: {
+                legend: {
+                    position: 'right',
+                    labels: {
+                        boxWidth: 15,
+                        font: {
+                            size: 10
+                        }
+                    }
                 }
             }
         }
@@ -548,7 +618,7 @@ function extractArticulationFeatures(wavlmFeatures) {
     // to the 12 EMA channels (6 articulators, each with x and y coordinates)
     
     // Here we're simulating the output
-    const simulatedFeatures = {
+    const articulationFeatures = {
         ul: {x: Math.sin(Date.now() * 0.001) * 0.5, y: Math.cos(Date.now() * 0.001) * 0.5},
         ll: {x: Math.sin(Date.now() * 0.001 + 1) * 0.5, y: Math.cos(Date.now() * 0.001 + 1) * 0.5},
         li: {x: Math.sin(Date.now() * 0.001 + 2) * 0.5, y: Math.cos(Date.now() * 0.001 + 2) * 0.5},
@@ -557,7 +627,42 @@ function extractArticulationFeatures(wavlmFeatures) {
         td: {x: Math.sin(Date.now() * 0.001 + 5) * 0.5, y: Math.cos(Date.now() * 0.001 + 5) * 0.5}
     };
     
-    return simulatedFeatures;
+    /*
+    // Real implementation would use proper matrices instead of simulated values
+    const features = wavlmFeatures.data;
+    const dims = wavlmFeatures.dims;
+    const featureSize = dims[2]; // 768
+    
+    // Apply a linear projection for each articulator
+    // Using pre-trained weights from your model
+    const articulationFeatures = {
+        ul: {x: 0, y: 0},
+        ll: {x: 0, y: 0},
+        li: {x: 0, y: 0},
+        tt: {x: 0, y: 0},
+        tb: {x: 0, y: 0},
+        td: {x: 0, y: 0}
+    };
+    
+    // This is just an example - you'd need the actual weight matrices
+    // from your trained model
+    for (const articulator in articulationFeatures) {
+        // For each x and y coordinate
+        for (const coord of ['x', 'y']) {
+            // Apply the projection (dot product)
+            let sum = 0;
+            for (let i = 0; i < featureSize; i++) {
+                // weights[articulator][coord][i] would be your trained weights
+                // For now using a placeholder value 
+                const weight = (i % featureSize) / featureSize * 0.01;
+                sum += features[i] * weight;
+            }
+            articulationFeatures[articulator][coord] = sum;
+        }
+    }
+    */
+
+    return articulationFeatures;
 }
 
 function calculateLoudness(audioData) {
@@ -578,25 +683,48 @@ function updateFeatureHistory(articulationFeatures, pitch, loudness) {
         featureHistory[key].shift();
     }
     
-    // Add new values
-    featureHistory.ul.push(articulationFeatures.ul.y);
-    featureHistory.ll.push(articulationFeatures.ll.y);
-    featureHistory.li.push(articulationFeatures.li.y);
-    featureHistory.tt.push(articulationFeatures.tt.y);
-    featureHistory.tb.push(articulationFeatures.tb.y);
-    featureHistory.td.push(articulationFeatures.td.y);
+    // Add new values - now with both X and Y
+    featureHistory.ul_x.push(articulationFeatures.ul.x);
+    featureHistory.ul_y.push(articulationFeatures.ul.y);
+    
+    featureHistory.ll_x.push(articulationFeatures.ll.x);
+    featureHistory.ll_y.push(articulationFeatures.ll.y);
+    
+    featureHistory.li_x.push(articulationFeatures.li.x);
+    featureHistory.li_y.push(articulationFeatures.li.y);
+    
+    featureHistory.tt_x.push(articulationFeatures.tt.x);
+    featureHistory.tt_y.push(articulationFeatures.tt.y);
+    
+    featureHistory.tb_x.push(articulationFeatures.tb.x);
+    featureHistory.tb_y.push(articulationFeatures.tb.y);
+    
+    featureHistory.td_x.push(articulationFeatures.td.x);
+    featureHistory.td_y.push(articulationFeatures.td.y);
+    
     featureHistory.pitch.push(pitch);
     featureHistory.loudness.push(loudness);
 }
 
 function updateFeatureUI(articulationFeatures, pitch, loudness) {
-    // Update vocal tract feature displays
-    document.getElementById('ul-value').textContent = articulationFeatures.ul.y.toFixed(3);
-    document.getElementById('ll-value').textContent = articulationFeatures.ll.y.toFixed(3);
-    document.getElementById('li-value').textContent = articulationFeatures.li.y.toFixed(3);
-    document.getElementById('tt-value').textContent = articulationFeatures.tt.y.toFixed(3);
-    document.getElementById('tb-value').textContent = articulationFeatures.tb.y.toFixed(3);
-    document.getElementById('td-value').textContent = articulationFeatures.td.y.toFixed(3);
+    // Update vocal tract feature displays - now with both X and Y
+    document.getElementById('ul-x-value').textContent = articulationFeatures.ul.x.toFixed(3);
+    document.getElementById('ul-y-value').textContent = articulationFeatures.ul.y.toFixed(3);
+    
+    document.getElementById('ll-x-value').textContent = articulationFeatures.ll.x.toFixed(3);
+    document.getElementById('ll-y-value').textContent = articulationFeatures.ll.y.toFixed(3);
+    
+    document.getElementById('li-x-value').textContent = articulationFeatures.li.x.toFixed(3);
+    document.getElementById('li-y-value').textContent = articulationFeatures.li.y.toFixed(3);
+    
+    document.getElementById('tt-x-value').textContent = articulationFeatures.tt.x.toFixed(3);
+    document.getElementById('tt-y-value').textContent = articulationFeatures.tt.y.toFixed(3);
+    
+    document.getElementById('tb-x-value').textContent = articulationFeatures.tb.x.toFixed(3);
+    document.getElementById('tb-y-value').textContent = articulationFeatures.tb.y.toFixed(3);
+    
+    document.getElementById('td-x-value').textContent = articulationFeatures.td.x.toFixed(3);
+    document.getElementById('td-y-value').textContent = articulationFeatures.td.y.toFixed(3);
     
     // Update source feature displays
     document.getElementById('pitch-value').textContent = pitch.toFixed(1);
@@ -604,13 +732,25 @@ function updateFeatureUI(articulationFeatures, pitch, loudness) {
 }
 
 function updateCharts() {
-    // Update articulators chart
-    articulatorsChart.data.datasets[0].data = featureHistory.ul;
-    articulatorsChart.data.datasets[1].data = featureHistory.ll;
-    articulatorsChart.data.datasets[2].data = featureHistory.li;
-    articulatorsChart.data.datasets[3].data = featureHistory.tt;
-    articulatorsChart.data.datasets[4].data = featureHistory.tb;
-    articulatorsChart.data.datasets[5].data = featureHistory.td;
+    // Update articulators chart with both X and Y values
+    articulatorsChart.data.datasets[0].data = featureHistory.ul_x;
+    articulatorsChart.data.datasets[1].data = featureHistory.ul_y;
+    
+    articulatorsChart.data.datasets[2].data = featureHistory.ll_x;
+    articulatorsChart.data.datasets[3].data = featureHistory.ll_y;
+    
+    articulatorsChart.data.datasets[4].data = featureHistory.li_x;
+    articulatorsChart.data.datasets[5].data = featureHistory.li_y;
+    
+    articulatorsChart.data.datasets[6].data = featureHistory.tt_x;
+    articulatorsChart.data.datasets[7].data = featureHistory.tt_y;
+    
+    articulatorsChart.data.datasets[8].data = featureHistory.tb_x;
+    articulatorsChart.data.datasets[9].data = featureHistory.tb_y;
+    
+    articulatorsChart.data.datasets[10].data = featureHistory.td_x;
+    articulatorsChart.data.datasets[11].data = featureHistory.td_y;
+    
     articulatorsChart.update();
 }
 

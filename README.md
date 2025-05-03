@@ -15,3 +15,22 @@ in real-time using a JavaScript version of Speech Articulatory Coding
   - wavlm-base: https://huggingface.co/microsoft/wavlm-base
   - wavlm_large-9_cut-10_mngu_linear.pkl: 
     https://huggingface.co/cheoljun95/Speech-Articulatory-Coding/tree/main
+
+
+extractFeaturesLoop()
+    ↓
+extractWavLMFeatures() → WavLM model processing
+    ↓
+extractArticulationFeatures() → Simulated articulatory features
+    ↓
+updateFeatureHistory() → Adds new values to history arrays (100 frames per feature)
+    ↓
+updateFeatureUI() → Updates text displays
+    ↓
+updateCharts() → Updates the visualization charts
+
+In the current implementation, the articulation features are just simulated. 
+For a real SPARC implementation:
+  - Take the WavLM output tensor (shape [1, 49, 768])
+  - Apply a linear transformation to map from 768 dimensions to the 12 EMA channels
+
