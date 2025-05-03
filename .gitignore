@@ -1,0 +1,15 @@
+#*
+.#*
+
+models/large/
+
+.ipynb_checkpoints/
+.vscode/
+__pycache__/
+feedback.ipynb
+output/
+tmp/
+venv/
+node_modules/
+package-lock.json
+package.json

@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>WavLM Real-Time Demo</title>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #f9f9f9;
+    }
+    .container {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+    .card {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      padding: 20px;
+      background-color: white;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .button-group {
+      display: flex;
+      gap: 10px;
+      margin: 15px 0;
+    }
+    button {
+      padding: 10px 15px;
+      background-color: #4285f4;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    button:hover {
+      background-color: #3367d6;
+    }
+    button:disabled {
+      background-color: #cccccc;
+    }
+    button.active {
+      background-color: #ea4335;
+    }
+    .visualizer-container {
+      position: relative;
+      height: 150px;
+      border-radius: 4px;
+      overflow: hidden;
+      background-color: #f5f5f5;
+    }
+    #waveform, #spectrogram {
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    .output-container {
+      display: flex;
+      flex-direction: column;
+      gap: 15px;
+    }
+    .output-visualizer {
+      height: 200px;
+      background-color: #f0f0f0;
+      border-radius: 4px;
+    }
+    .log {
+      font-family: monospace;
+      height: 150px;
+      overflow-y: auto;
+      background-color: #f5f5f5;
+      padding: 10px;
+      border-radius: 4px;
+      font-size: 13px;
+      border: 1px solid #ddd;
+    }
+    .stats-panel {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 10px;
+    }
+    .stat-card {
+      background-color: #f5f5f5;
+      border-radius: 4px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+    }
+    .stat-label {
+      font-size: 12px;
+      color: #666;
+    }
+    .stat-value {
+      font-size: 18px;
+      font-weight: bold;
+      margin-top: 4px;
+    }
+    .hidden {
+      display: none;
+    }
+    .tab-buttons {
+      display: flex;
+      margin-bottom: 10px;
+    }
+    .tab-button {
+      background-color: #eee;
+      color: #333;
+      border: 1px solid #ddd;
+      border-bottom: none;
+      padding: 10px 15px;
+      cursor: pointer;
+      border-radius: 4px 4px 0 0;
+    }
+    .tab-button.active {
+      background-color: white;
+      font-weight: bold;
+    }
+    .tab-content {
+      border: 1px solid #ddd;
+      padding: 15px;
+      border-radius: 0 0 4px 4px;
+    }
+    .progress-bar {
+      height: 4px;
+      width: 100%;
+      background-color: #eee;
+      border-radius: 2px;
+      overflow: hidden;
+      margin-top: 10px;
+    }
+    .progress-value {
+      height: 100%;
+      width: 0%;
+      background-color: #4285f4;
+      transition: width 0.3s ease;
+    }
+  </style>
+</head>
+<body>
+  <h1>WavLM Real-Time Audio Processing</h1>
+  <p>This demo processes audio continuously through the WavLM model for real-time feedback.</p>
+  
+  <div class="container">
+    <!-- Model Loading -->
+    <div class="card">
+      <h2>1. Model Setup</h2>
+      <div class="button-group">
+        <button id="loadModelBtn">Load WavLM Model</button>
+      </div>
+      <div class="progress-bar">
+        <div id="modelLoadProgress" class="progress-value"></div>
+      </div>
+      <div id="modelStats" class="stats-panel hidden">
+        <div class="stat-card">
+          <span class="stat-label">Model Size</span>
+          <span class="stat-value" id="modelSizeStat">-</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Load Time</span>
+          <span class="stat-value" id="loadTimeStat">-</span>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Audio Processing -->
+    <div class="card">
+      <h2>2. Real-Time Audio Processing</h2>
+      <p>Click Start to begin processing audio from your microphone in real-time.</p>
+      <div class="button-group">
+        <button id="startBtn" disabled>Start Processing</button>
+        <button id="stopBtn" disabled>Stop</button>
+      </div>
+      <div id="processingStats" class="stats-panel hidden">
+        <div class="stat-card">
+          <span class="stat-label">Audio Buffer Size</span>
+          <span class="stat-value" id="bufferSizeStat">-</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Processing Time</span>
+          <span class="stat-value" id="processTimeStat">-</span>
+        </div>
+        <div class="stat-card">
+          <span class="stat-label">Frame Rate</span>
+          <span class="stat-value" id="frameRateStat">-</span>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Visualization -->
+    <div class="card">
+      <h2>3. Visualization</h2>
+      <div class="tab-buttons">
+        <button class="tab-button active" data-tab="audio-tab">Audio Input</button>
+        <button class="tab-button" data-tab="output-tab">Model Output</button>
+      </div>
+      
+      <div class="tab-content" id="audio-tab">
+        <div class="visualizer-container">
+          <canvas id="waveform"></canvas>
+        </div>
+      </div>
+      
+      <div class="tab-content hidden" id="output-tab">
+        <div class="output-container">
+          <canvas id="outputVisualizer" class="output-visualizer"></canvas>
+          <div id="outputStats"></div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Log -->
+    <div class="card">
+      <h3>Log</h3>
+      <div id="log" class="log"></div>
+    </div>
+  </div>
+
+  <script>
+    // Global variables
+    let session = null;
+    let audioContext = null;
+    let analyser = null;
+    let mediaStream = null;
+    let processingInterval = null;
+    let isProcessing = false;
+    let audioWorklet = null;
+    let audioProcessor = null;
+    let lastProcessingTime = 0;
+    let frameCount = 0;
+    let startTime = 0;
+    
+    // Audio processing settings
+    const CHUNK_DURATION_MS = 1000;     // Process 1 second chunks
+    const MODEL_INPUT_LENGTH = 16000;   // 16kHz sample rate
+    const UPDATE_INTERVAL_MS = 100;     // Update visualizations every 100ms
+    
+    // Audio buffer to hold incoming audio data
+    let audioBuffer = new Float32Array(MODEL_INPUT_LENGTH);
+    let audioBufferIndex = 0;
+    
+    // Circular buffer for overlap processing
+    let circularBuffer = new Float32Array(MODEL_INPUT_LENGTH * 2);
+    let circularBufferIndex = 0;
+    
+    // Frame rate calculation
+    let frameRates = [];
+    let lastFrameTime = 0;
+    
+    // DOM elements
+    const loadModelBtn = document.getElementById('loadModelBtn');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const waveformCanvas = document.getElementById('waveform');
+    const outputVisualizer = document.getElementById('outputVisualizer');
+    const logElement = document.getElementById('log');
+    const outputStats = document.getElementById('outputStats');
+    const modelLoadProgress = document.getElementById('modelLoadProgress');
+    const modelStats = document.getElementById('modelStats');
+    const processingStats = document.getElementById('processingStats');
+    const modelSizeStat = document.getElementById('modelSizeStat');
+    const loadTimeStat = document.getElementById('loadTimeStat');
+    const bufferSizeStat = document.getElementById('bufferSizeStat');
+    const processTimeStat = document.getElementById('processTimeStat');
+    const frameRateStat = document.getElementById('frameRateStat');
+    
+    // Add this at the beginning of your script
+    document.addEventListener('click', function initAudioContext() {
+      if (audioContext) {
+        audioContext.resume().then(() => {
+          log('AudioContext resumed after user interaction');
+        });
+      }
+      document.removeEventListener('click', initAudioContext);
+    }, { once: true });
+
+    // Set up tab switching
+    document.querySelectorAll('.tab-button').forEach(button => {
+      button.addEventListener('click', () => {
+        // Hide all tab contents
+        document.querySelectorAll('.tab-content').forEach(tab => {
+          tab.classList.add('hidden');
+        });
+        
+        // Deactivate all buttons
+        document.querySelectorAll('.tab-button').forEach(btn => {
+          btn.classList.remove('active');
+        });
+        
+        // Show selected tab and activate button
+        const tabId = button.getAttribute('data-tab');
+        document.getElementById(tabId).classList.remove('hidden');
+        button.classList.add('active');
+      });
+    });
+    
+    // Logging function
+    function log(message) {
+      const timestamp = new Date().toLocaleTimeString();
+      logElement.innerHTML += `[${timestamp}] ${message}<br>`;
+      logElement.scrollTop = logElement.scrollHeight;
+      console.log(`[${timestamp}] ${message}`);
+    }
+    
+    // Load model
+    async function loadModel() {
+      log('Loading WavLM model...');
+      loadModelBtn.disabled = true;
+      modelLoadProgress.style.width = '0%';
+      
+      try {
+        const modelUrl = '../models/wavlm_base_layer9_quantized.onnx';
+        const modelLoadStart = performance.now();
+        
+        // Check file existence
+        const response = await fetch(modelUrl, { method: 'HEAD' });
+        if (!response.ok) {
+          throw new Error(`Model file not found: ${response.status}`);
+        }
+        
+        const fileSize = parseInt(response.headers.get('Content-Length'));
+        modelSizeStat.textContent = `${(fileSize/1024/1024).toFixed(2)} MB`;
+        log(`Model size: ${(fileSize/1024/1024).toFixed(2)} MB`);
+        
+        // Set options for ONNX.js
+        const options = {
+          executionProviders: ['wasm'],
+          graphOptimizationLevel: 'all'
+        };
+        
+        log('Creating inference session...');
+        modelLoadProgress.style.width = '20%';
+        
+        // Load the model
+        session = await ort.InferenceSession.create(modelUrl, options);
+        
+        const loadTime = performance.now() - modelLoadStart;
+        loadTimeStat.textContent = `${loadTime.toFixed(0)} ms`;
+        
+        modelLoadProgress.style.width = '100%';
+        modelStats.classList.remove('hidden');
+        
+        log('Model loaded successfully!');
+        log(`Model inputs: ${session.inputNames.join(', ')}`);
+        log(`Model outputs: ${session.outputNames.join(', ')}`);
+        
+        // Enable start button
+        startBtn.disabled = false;
+      } catch (error) {
+        log(`Error loading model: ${error.message}`);
+        loadModelBtn.disabled = false;
+      }
+    }
+    
+    async function analyzeModel() {
+      try {
+        log('Analyzing model metadata...');
+        
+        // Get detailed input information
+        session.inputNames.forEach(name => {
+          const info = session._model.inputs.find(i => i.name === name);
+          log(`Input: ${name}`);
+          log(`  - Shape: [${info.dims.join(', ')}]`);
+          log(`  - Type: ${info.type}`);
+        });
+        
+        // Inspect output info
+        session.outputNames.forEach(name => {
+          const info = session._model.outputs.find(o => o.name === name);
+          log(`Output: ${name}`);
+          log(`  - Shape: [${info.dims.join(', ')}]`);
+          log(`  - Type: ${info.type}`);
+        });
+      } catch (error) {
+        log(`Error analyzing model: ${error.message}`);
+      }
+    }
+
+    analyzeModel();
+
+    async function analyzeModelInputs() {
+      try {
+        log('Analyzing model input requirements...');
+        
+        // Log what we know about the model input
+        const inputInfo = {};
+        session.inputNames.forEach(name => {
+          inputInfo[name] = session._model.getInputDimensions(name);
+        });
+        
+        log(`Model input details: ${JSON.stringify(inputInfo)}`);
+        
+        // Inform about expected input shape
+        const firstInputName = session.inputNames[0];
+        const shape = inputInfo[firstInputName];
+        
+        if (shape) {
+          log(`Expected input shape for ${firstInputName}: [${shape.join(', ')}]`);
+          
+          // Update our model input length if needed
+          if (shape.length >= 2 && shape[1] > 0) {
+            const expectedLength = shape[1];
+            if (expectedLength !== MODEL_INPUT_LENGTH) {
+              log(`⚠️ Adjusting MODEL_INPUT_LENGTH from ${MODEL_INPUT_LENGTH} to ${expectedLength}`);
+              window.MODEL_INPUT_LENGTH = expectedLength;
+            }
+          }
+        }
+        
+        log('Model analysis complete');
+      } catch (error) {
+        log(`Error analyzing model: ${error.message}`);
+      }
+    }
+
+    analyzeModelInputs();
+
+    // Initialize audio processing
+    async function startProcessing() {
+      if (!session) {
+        log('Model not loaded yet');
+        return;
+      }
+      
+      try {
+        // Request microphone access
+        log('Requesting microphone access...');
+        mediaStream = await navigator.mediaDevices.getUserMedia({ 
+          audio: { 
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          } 
+        });
+        
+        // Create audio context
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        log('Microphone access granted. Setting up audio context.');
+        // Create source from microphone
+        const source = audioContext.createMediaStreamSource(mediaStream);
+        
+        // Create analyser for visualization - IMPORTANT: proper configuration
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.8;
+        
+        // Connect source to analyzer - THIS IS CRITICAL
+        source.connect(analyser);
+        
+        // Set up audio processing node
+        const bufferSize = 4096;
+        audioProcessor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+        audioProcessor.onaudioprocess = processAudioChunk;
+        
+        // Connect source to processor
+        source.connect(audioProcessor);
+        
+        // Connect processor to destination (needed for ScriptProcessorNode to work)
+        audioProcessor.connect(audioContext.destination);
+        
+        // Setup visualization refresh
+        setupWaveformVisualization();
+        
+        // Start processing
+        isProcessing = true;
+        frameCount = 0;
+        startTime = performance.now();
+        lastFrameTime = startTime;
+        
+        // Set up stats updates
+        processingInterval = setInterval(updateProcessingStats, 500);
+        
+        // Update UI
+        startBtn.disabled = true;
+        stopBtn.disabled = false;
+        startBtn.classList.remove('active');
+        stopBtn.classList.add('active');
+        processingStats.classList.remove('hidden');
+        
+        log('Real-time audio processing started');
+      } catch (error) {
+        log(`Error starting audio processing: ${error.message}`);
+        console.error(error);
+        startBtn.disabled = false;
+      }
+    }
+
+    // Stop audio processing
+    function stopProcessing() {
+      if (!isProcessing) return;
+      
+      // Stop interval
+      if (processingInterval) {
+        clearInterval(processingInterval);
+        processingInterval = null;
+      }
+      
+      // Disconnect and clean up audio resources
+      if (audioProcessor) {
+        audioProcessor.disconnect();
+        audioProcessor = null;
+      }
+      
+      if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        mediaStream = null;
+      }
+      
+      if (audioContext) {
+        audioContext.close();
+        audioContext = null;
+      }
+      
+      // Reset state
+      isProcessing = false;
+      analyser = null;
+      
+      // Update UI
+      startBtn.disabled = false;
+      stopBtn.disabled = true;
+      startBtn.classList.remove('active');
+      stopBtn.classList.remove('active');
+      
+      log('Audio processing stopped');
+    }
+    
+    // Process each audio chunk
+    async function processAudioChunk(event) {
+      if (!isProcessing || !session) return;
+      
+      // Get input data
+      const inputData = event.inputBuffer.getChannelData(0);
+      
+      // Add data to circular buffer with overlap
+      for (let i = 0; i < inputData.length; i++) {
+        circularBuffer[circularBufferIndex] = inputData[i];
+        circularBufferIndex = (circularBufferIndex + 1) % circularBuffer.length;
+      }
+      
+      // Extract the most recent MODEL_INPUT_LENGTH samples
+      const processingChunk = new Float32Array(MODEL_INPUT_LENGTH);
+      const startIdx = (circularBufferIndex - MODEL_INPUT_LENGTH + circularBuffer.length) % circularBuffer.length;
+      
+      for (let i = 0; i < MODEL_INPUT_LENGTH; i++) {
+        processingChunk[i] = circularBuffer[(startIdx + i) % circularBuffer.length];
+      }
+      
+      // Process with model (don't await to avoid blocking audio thread)
+      processWithModel(processingChunk).catch(error => {
+        console.error('Error in model processing:', error);
+      });
+    }
+    
+    // Process audio with the model
+    async function processWithModel(audioChunk) {
+      try {
+        const processStart = performance.now();
+        
+        // Ensure audio data is right size and type
+        const audioLength = MODEL_INPUT_LENGTH;
+        const processData = new Float32Array(audioLength);
+        
+        // Copy available data (with zero-padding if needed)
+        const copyLength = Math.min(audioChunk.length, audioLength);
+        processData.set(audioChunk.slice(0, copyLength));
+        
+        // Log input details for debugging
+        log(`Processing audio chunk: ${processData.length} samples`);
+        
+        // Get input name from model
+        const inputName = session.inputNames[0];
+        
+        // Create tensor with explicit shape that matches model expectations
+        // WavLM models typically expect [batch_size, sequence_length] inputs
+        const inputTensor = new ort.Tensor('float32', processData, [1, audioLength]);
+        
+        // Run inference with detailed error handling
+        try {
+          const feeds = {};
+          feeds[inputName] = inputTensor;
+          
+          log(`Running inference with input shape: [1, ${audioLength}]`);
+          const results = await session.run(feeds);
+          
+          // Update processing stats
+          const processingTime = performance.now() - processStart;
+          lastProcessingTime = processingTime;
+          frameCount++;
+          
+          // Update visualization occasionally
+          if (frameCount % 3 === 0) {
+            updateOutputVisualization(results);
+          }
+          
+          return results;
+        } catch (inferenceError) {
+          log(`Inference error: ${inferenceError.message}`);
+          console.error('Full error:', inferenceError);
+          
+          // Try alternative input formats
+          if (session.inputNames.length > 0) {
+            // Try with simpler tensor format
+            log('Trying alternative input format...');
+            try {
+              // Create a simpler tensor
+              const simpleTensor = new ort.Tensor(
+                'float32', 
+                processData,
+                // Try with just a flat array
+                [processData.length]
+              );
+              
+              const altFeeds = {};
+              altFeeds[inputName] = simpleTensor;
+              return await session.run(altFeeds);
+            } catch (altError) {
+              log(`Alternative format failed: ${altError.message}`);
+              throw altError;
+            }
+          } else {
+            throw inferenceError;
+          }
+        }
+      } catch (error) {
+        log(`Model processing error: ${error.message}`);
+        console.error('Model processing error:', error);
+        return null;
+      }
+    }
+
+    // Set up waveform visualization
+    function setupWaveformVisualization() {
+      const ctx = waveformCanvas.getContext('2d');
+      waveformCanvas.width = waveformCanvas.parentElement.clientWidth;
+      waveformCanvas.height = waveformCanvas.parentElement.clientHeight;
+      
+      function drawWaveform() {
+        if (!isProcessing || !analyser) return;
+        
+        // This is the key part - request next animation frame first
+        requestAnimationFrame(drawWaveform);
+        
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        analyser.getByteTimeDomainData(dataArray);
+        
+        ctx.fillStyle = '#f5f5f5';
+        ctx.fillRect(0, 0, waveformCanvas.width, waveformCanvas.height);
+        
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = '#4285f4';
+        ctx.beginPath();
+        
+        const sliceWidth = waveformCanvas.width / bufferLength;
+        let x = 0;
+        
+        for (let i = 0; i < bufferLength; i++) {
+          const v = dataArray[i] / 128.0;
+          const y = v * waveformCanvas.height / 2;
+          
+          if (i === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+          
+          x += sliceWidth;
+        }
+        
+        ctx.stroke();
+      }
+      
+      // Start visualization loop
+      requestAnimationFrame(drawWaveform);
+    }
+
+    // Update output visualization
+    function updateOutputVisualization(results) {
+      if (!results) return;
+      
+      const canvas = outputVisualizer;
+      const ctx = canvas.getContext('2d');
+      canvas.width = canvas.parentElement.clientWidth;
+      canvas.height = canvas.parentElement.clientHeight;
+      
+      // Clear canvas
+      ctx.fillStyle = '#f5f5f5';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      // Find the main output tensor (usually the first output)
+      const outputName = session.outputNames[0];
+      const output = results[outputName];
+      
+      if (!output) return;
+      
+      const shape = output.dims;
+      const data = output.data;
+      
+      // Update output stats
+      let statsHtml = '<h4>Output Statistics:</h4>';
+      statsHtml += `<p><strong>${outputName}</strong> - Shape: [${shape.join(', ')}]</p>`;
+      
+      // Calculate some statistics
+      let sum = 0;
+      let min = Infinity;
+      let max = -Infinity;
+      
+      for (let i = 0; i < Math.min(data.length, 1000); i++) {
+        sum += data[i];
+        min = Math.min(min, data[i]);
+        max = Math.max(max, data[i]);
+      }
+      
+      const avg = sum / Math.min(data.length, 1000);
+      statsHtml += `<p>Min: ${min.toFixed(4)}, Max: ${max.toFixed(4)}, Avg: ${avg.toFixed(4)}</p>`;
+      
+      outputStats.innerHTML = statsHtml;
+      
+      // Draw a heatmap or visualization based on output shape
+      if (shape.length >= 2) {
+        // Determine dimensions for visualization
+        const height = Math.min(shape[0], 100);
+        const width = Math.min(shape[1], canvas.width);
+        
+        // Calculate cell size
+        const cellWidth = canvas.width / width;
+        const cellHeight = canvas.height / height;
+        
+        // Find data range for color scaling
+        min = Infinity;
+        max = -Infinity;
+        
+        for (let i = 0; i < Math.min(data.length, width * height); i++) {
+          min = Math.min(min, data[i]);
+          max = Math.max(max, data[i]);
+        }
+        
+        const range = max - min;
+        
+        // Draw heatmap
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const index = y * width + x;
+            if (index < data.length) {
+              // Normalize value to 0-1 range
+              const value = (data[index] - min) / range;
+              
+              // Create color (blue to red gradient)
+              const r = Math.floor(value * 255);
+              const g = Math.floor((1 - Math.abs(value - 0.5) * 2) * 255);
+              const b = Math.floor((1 - value) * 255);
+              
+              ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+              ctx.fillRect(x * cellWidth, y * cellHeight, cellWidth, cellHeight);
+            }
+          }
+        }
+      } else {
+        // For 1D output, draw as a line graph
+        const values = data.slice(0, Math.min(data.length, canvas.width));
+        
+        // Find min/max for scaling
+        min = Infinity;
+        max = -Infinity;
+        
+        for (const value of values) {
+          min = Math.min(min, value);
+          max = Math.max(max, value);
+        }
+        
+        const range = max - min || 1;
+        
+        // Draw line
+        ctx.strokeStyle = '#4285f4';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        
+        const stepX = canvas.width / values.length;
+        
+        for (let i = 0; i < values.length; i++) {
+          const x = i * stepX;
+          const normalizedValue = (values[i] - min) / range;
+          const y = canvas.height - (normalizedValue * canvas.height);
+          
+          if (i === 0) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+        }
+        
+        ctx.stroke();
+      }
+    }
+    
+    // Update processing statistics
+    function updateProcessingStats() {
+      if (!isProcessing) return;
+      
+      // Calculate average frame rate
+      const avgFrameRate = frameRates.length > 0 ? 
+        frameRates.reduce((sum, rate) => sum + rate, 0) / frameRates.length : 0;
+      
+      bufferSizeStat.textContent = `${MODEL_INPUT_LENGTH} samples`;
+      processTimeStat.textContent = `${lastProcessingTime.toFixed(1)} ms`;
+      frameRateStat.textContent = `${avgFrameRate.toFixed(1)} fps`;
+    }
+    
+    // Event listeners
+    loadModelBtn.addEventListener('click', loadModel);
+    startBtn.addEventListener('click', function() {
+      log('Start button clicked');
+      try {
+        startProcessing();
+      } catch (error) {
+        log(`Error in startProcessing: ${error.message}`);
+        console.error(error);
+      }
+    });
+    stopBtn.addEventListener('click', stopProcessing);
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      if (waveformCanvas) {
+        waveformCanvas.width = waveformCanvas.parentElement.clientWidth;
+        waveformCanvas.height = waveformCanvas.parentElement.clientHeight;
+      }
+      if (outputVisualizer) {
+        outputVisualizer.width = outputVisualizer.parentElement.clientWidth;
+        outputVisualizer.height = outputVisualizer.parentElement.clientHeight;
+      }
+    });
+    
+    // Check browser compatibility
+    function checkBrowserCompatibility() {
+      let compatible = true;
+      let message = 'Browser compatibility: ';
+      
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        compatible = false;
+        message += 'No media devices API. ';
+        log('ERROR: This browser does not support mediaDevices API');
+      }
+      
+      if (!window.AudioContext && !window.webkitAudioContext) {
+        compatible = false;
+        message += 'No AudioContext. ';
+        log('ERROR: This browser does not support AudioContext');
+      }
+      
+      log(message + (compatible ? 'OK' : 'NOT COMPATIBLE'));
+      return compatible;
+    }
+
+    // Call this function when the page loads
+    checkBrowserCompatibility();
+
+
+    // Initial log
+    log('WavLM Real-Time Demo Ready');
+  
+  </script>
+</body>
+</html>

@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>ONNX Runtime Simple Test</title>
+  <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort.min.js"></script>
+  <style>
+    #log {
+      font-family: monospace;
+      height: 300px;
+      overflow-y: auto;
+      background-color: #f0f0f0;
+      padding: 10px;
+      border: 1px solid #ccc;
+      margin-top: 20px;
+    }
+    button {
+      padding: 10px 15px;
+      margin: 5px;
+    }
+  </style>
+</head>
+<body>
+  <h1>ONNX Runtime Simple Test</h1>
+  
+  <div>
+    <button id="testSimple">Test Simple Inference</button>
+    <button id="checkWavLm">Check WavLM Model</button>
+  </div>
+  
+  <div id="log"></div>
+  
+  <script>
+    const logElement = document.getElementById('log');
+    
+    function log(message) {
+      const timestamp = new Date().toLocaleTimeString();
+      logElement.innerHTML += `[${timestamp}] ${message}<br>`;
+      console.log(message);
+      logElement.scrollTop = logElement.scrollHeight;
+    }
+    
+    // Configure WASM paths
+    if (window.ort && window.ort.env && window.ort.env.wasm) {
+      log("Setting WASM paths...");
+      ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/';
+    }
+    
+    // Test simple tensor operations
+    document.getElementById('testSimple').addEventListener('click', async function() {
+      try {
+        log("Testing simple tensor operations...");
+        
+        // Create a simple tensor
+        const tensorData = new Float32Array([1, 2, 3, 4, 5, 6]);
+        const tensor = new ort.Tensor('float32', tensorData, [2, 3]);
+        
+        log(`Created tensor with shape [${tensor.dims.join(', ')}]`);
+        log(`Tensor data: ${Array.from(tensor.data).join(', ')}`);
+        
+        // Now try an actual inference with manual data
+        log("Creating a test session directly with your WavLM model...");
+        
+        // Create inference options
+        const options = {
+          executionProviders: ['wasm'],
+          graphOptimizationLevel: 'all'
+        };
+        
+        // Instead of creating an in-memory model, let's test directly with your WavLM model
+        const modelPath = '../models/wavlm_base_layer9_quantized.onnx';
+        
+        // First check if the file exists
+        try {
+          const response = await fetch(modelPath, { method: 'HEAD' });
+          if (response.ok) {
+            const size = response.headers.get('Content-Length');
+            log(`✅ WavLM model file exists! Size: ${(size/1024/1024).toFixed(2)} MB`);
+          } else {
+            log(`❌ WavLM model file not found: ${response.status} ${response.statusText}`);
+            return;
+          }
+        } catch (e) {
+          log(`❌ Error checking model file: ${e.message}`);
+          return;
+        }
+        
+        // Now try to create a session with the model
+        try {
+          log("Creating session with WavLM model...");
+          const session = await ort.InferenceSession.create(modelPath, options);
+          
+          log("✅ Session created successfully!");
+          log(`Model inputs: ${session.inputNames.join(', ')}`);
+          log(`Model outputs: ${session.outputNames.join(', ')}`);
+          
+          // Generate dummy input data for your model
+          const inputName = session.inputNames[0];
+          const dummyInput = new Float32Array(16000).fill(0.1); // 1 second of audio at 16kHz
+          
+          // Create input tensor
+          const inputTensor = new ort.Tensor('float32', dummyInput, [1, 16000]);
+          
+          // Run inference
+          log(`Running inference with input shape [${inputTensor.dims.join(', ')}]...`);
+          const feeds = {};
+          feeds[inputName] = inputTensor;
+          
+          const outputData = await session.run(feeds);
+          
+          // Log output information
+          log("✅ Inference completed successfully!");
+          const outputName = session.outputNames[0];
+          const output = outputData[outputName];
+          
+          log(`Output shape: [${output.dims.join(', ')}]`);
+          log(`Output data sample: ${Array.from(output.data.slice(0, 5)).join(', ')}...`);
+          
+          log("Basic ONNX Runtime functionality is working correctly!");
+        } catch (e) {
+          log(`❌ Error during session creation or inference: ${e.message}`);
+          console.error(e);
+        }
+        
+      } catch (e) {
+        log(`❌ Error in tensor test: ${e.message}`);
+        console.error(e);
+      }
+    });
+    
+    // Check WavLM model specifically
+    document.getElementById('checkWavLm').addEventListener('click', async function() {
+      try {
+        log("Checking WavLM model file...");
+        const modelPath = '../models/wavlm_base_layer9_quantized.onnx';
+        
+        // Check if file exists
+        const response = await fetch(modelPath, { method: 'HEAD' });
+        
+        if (response.ok) {
+          const size = response.headers.get('Content-Length');
+          log(`✅ WavLM model file exists! Size: ${(size/1024/1024).toFixed(2)} MB`);
+          
+          // Try to peek at the first few bytes to confirm it's an ONNX file
+          try {
+            const headerResponse = await fetch(modelPath, { headers: { 'Range': 'bytes=0-15' } });
+            const headerBuffer = await headerResponse.arrayBuffer();
+            const headerView = new Uint8Array(headerBuffer);
+            
+            // ONNX files often start with 'ONNX'
+            const headerString = String.fromCharCode.apply(null, headerView.slice(0, 10));
+            log(`File header: ${headerString} (first 10 bytes)`);
+            
+            // Convert to hex for better inspection
+            const headerHex = Array.from(headerView).map(b => b.toString(16).padStart(2, '0')).join(' ');
+            log(`Header hex: ${headerHex}`);
+          } catch (e) {
+            log(`Error reading file header: ${e.message}`);
+          }
+        } else {
+          log(`❌ WavLM model file not found: ${response.status} ${response.statusText}`);
+          
+          // Check if the 'models' directory exists
+          try {
+            const dirResponse = await fetch('../models/', { method: 'HEAD' });
+            if (dirResponse.ok) {
+              log("✅ 'models' directory exists");
+            } else {
+              log(`❌ 'models' directory not found: ${dirResponse.status}`);
+            }
+          } catch (e) {
+            log(`Error checking 'models' directory: ${e.message}`);
+          }
+        }
+      } catch (e) {
+        log(`Error in WavLM model check: ${e.message}`);
+        console.error(e);
+      }
+    });
+    
+    log("Page loaded. ONNX Runtime version: " + (ort.version || "unknown"));
+  </script>
+</body>
+</html>
