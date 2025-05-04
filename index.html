@@ -8,6 +8,17 @@
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        // Load required files before initializing
+        window.addEventListener('DOMContentLoaded', async () => {
+          try {
+            await init();
+          } catch (error) {
+            console.error("Error during initialization:", error);
+            updateStatus("Failed to initialize: " + error.message);
+          }
+        });
+      </script>
     <style>
         .feature-display {
             height: 300px;
