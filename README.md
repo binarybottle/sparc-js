@@ -3,17 +3,22 @@ JavaScript port of Speech Articulatory Coding (SPARC)
 
 ## Speech Articulatory Coding (JavaScript version)
 
-This project provides a browser-based real-time implementation of Speech Articulatory Coding (SPARC), using a 9-layer, quantized, ONNX version of the WavLM-base model. It allows for visualization of speech articulatory features during live speech.
+This project provides a browser-based real-time, JavaScript implementation 
+of the Berkeley Speech Group's software Speech Articulatory Coding (SPARC), 
+using a 9-layer, quantized, ONNX version of the WavLM-base model. 
+It allows for visualization of speech articulatory features during live speech.
 
-https://github.com/binarybottle/sparc-js.git
-Author: Arno Klein (arnoklein.info)
-License: MIT License (see LICENSE)
+- https://github.com/binarybottle/sparc-js.git
+- Author: Arno Klein (arnoklein.info)
+- License: MIT License (see LICENSE)
 
 ### Background
 
 - **Article**: 
-  - arXiv: https://arxiv.org/abs/2406.12998
-  - JSTSP: https://ieeexplore.ieee.org/document/10759573
+  - C. J. Cho, P. Wu, T. S. Prabhune, D. Agarwal and G. K. Anumanchipalli, "Coding Speech Through Vocal Tract Kinematics," in IEEE Journal of Selected Topics in Signal Processing, vol. 18, no. 8, pp. 1427-1440, Dec. 2024, doi: 10.1109/JSTSP.2024.3497655. 
+    - JSTSP: https://ieeexplore.ieee.org/document/10759573
+    - arXiv: https://arxiv.org/abs/2406.12998
+  
 - **Original Python code**: 
   - https://github.com/Berkeley-Speech-Group/Speech-Articulatory-Coding
 - **Original models**:
