@@ -3,36 +3,157 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Real-time SPARC Feature Extraction</title>
+    <title>Speech Articulatory Coding</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        .feature-display {
-            height: 300px;
-            margin-bottom: 20px;
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
         }
+        
         .controls {
             margin: 20px 0;
         }
-        .audio-visualizer {
-            height: 100px;
-            background-color: #f8f9fa;
-            margin-bottom: 20px;
-        }
+        
         .status-indicator {
             font-weight: bold;
             margin-bottom: 10px;
         }
-        .articulators-chart {
-            height: 400px;
+        
+        /* SVG styling */
+        #vocal-tract-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        
+        #vocal-tract-svg {
+            width: 100%;
+            height: 500px;
+            background-color: #fff;
+            border-radius: 4px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .tongue {
+            fill: #FF9B9B;
+            stroke: #E74C3C;
+            stroke-width: 0.01;
+            opacity: 0.9;
+        }
+
+        .lips {
+            fill: #FF7979;
+            stroke: #E74C3C;
+            stroke-width: 0.01;
+            opacity: 0.9;
+            z-index: 10; /* Try to ensure lips appear above other elements */
+        }
+
+        .debug-marker {
+            stroke-width: 0.005;
+            stroke: white;
+            z-index: 100; /* Ensure markers appear on top */
+        }
+
+        .debug-line {
+        stroke: #aaa;
+        stroke-width: 0.01;
+        stroke-dasharray: 0.03;
+        opacity: 0.5;
+        }
+
+        .palate {
+            fill: none;
+            stroke: #555;
+            stroke-width: 2px;
+        }
+        
+        .jaw {
+            fill: none;
+            stroke: #555;
+            stroke-width: 2px;
+        }
+        
+        .teeth {
+            fill: #FFF;
+            stroke: #DDD;
+            stroke-width: 1px;
+        }
+        
+        .pharynx {
+            fill: #FFDDDD;
+            stroke: #E74C3C;
+            stroke-width: 1px;
+            opacity: 0.5;
+        }
+        
+        /* Mini audio visualization */
+        .mini-audio-viz {
+            position: absolute;
+            right: 20px;
+            bottom: 20px;
+            width: 120px;
+            height: 80px;
+            background: rgba(255, 255, 255, 0.7);
+            border-radius: 5px;
+            border: 1px solid #ddd;
+            display: flex;
+            justify-content: space-around;
+            align-items: flex-end;
+            padding: 5px;
+            box-shadow: 0 0 5px rgba(0,0,0,0.1);
+        }
+        
+        .audio-bar {
+            width: 40%;
+            height: 0;
+            transition: height 0.1s ease;
+            border-top-left-radius: 3px;
+            border-top-right-radius: 3px;
+        }
+        
+        .pitch-bar {
+            background: linear-gradient(to top, #3498db, #9b59b6);
+        }
+        
+        .loudness-bar {
+            background: linear-gradient(to top, #2ecc71, #f1c40f);
+        }
+        
+        .mini-label {
+            position: absolute;
+            color: #333;
+            font-size: 10px;
+        }
+        
+        .pitch-label {
+            left: 10px;
+            top: 5px;
+        }
+        
+        .loudness-label {
+            right: 10px;
+            top: 5px;
+        }
+        
+        /* Debug mode toggle */
+        .debug-toggle {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            font-size: 12px;
+            color: #888;
+            cursor: pointer;
         }
     </style>
 </head>
 <body>
-    <div class="container mt-4">
-        <h1>Real-time SPARC Feature Extraction</h1>
+    <div class="container">
+        <h1>Speech Articulatory Coding</h1>
         
         <div class="status-indicator" id="status">Status: Loading models...</div>
         
@@ -41,60 +162,25 @@
             <button id="stopButton" class="btn btn-danger" disabled>Stop</button>
         </div>
         
-        <div class="row">
-            <div class="col-12">
-                <h3>Articulatory Features</h3>
-                <ul class="nav nav-tabs" id="feature-tabs" role="tablist">
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link active" id="xaxis-tab" data-bs-toggle="tab" data-bs-target="#xaxis-chart" type="button" role="tab" aria-controls="xaxis" aria-selected="true">X Values</button>
-                    </li>
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="yaxis-tab" data-bs-toggle="tab" data-bs-target="#yaxis-chart" type="button" role="tab" aria-controls="yaxis" aria-selected="false">Y Values</button>
-                    </li>
-                    <li class="nav-item" role="presentation">
-                        <button class="nav-link" id="xy-tab" data-bs-toggle="tab" data-bs-target="#xy-chart" type="button" role="tab" aria-controls="xy" aria-selected="false">X-Y Positions</button>
-                    </li>
-                </ul>
-                <div class="tab-content" id="feature-tab-content">
-                    <div class="tab-pane fade show active" id="xaxis-chart" role="tabpanel" aria-labelledby="xaxis-tab">
-                        <canvas id="xValuesChart" class="articulators-chart"></canvas>
-                    </div>
-                    <div class="tab-pane fade" id="yaxis-chart" role="tabpanel" aria-labelledby="yaxis-tab">
-                        <canvas id="yValuesChart" class="articulators-chart"></canvas>
-                    </div>
-                    <div class="tab-pane fade" id="xy-chart" role="tabpanel" aria-labelledby="xy-tab">
-                        <canvas id="xyPositionsChart" class="articulators-chart"></canvas>
-                    </div>
-                </div>
+        <div id="vocal-tract-container">
+            <svg id="vocal-tract-svg" viewBox="-2 -2 4 4" preserveAspectRatio="xMidYMid meet">
+                <!-- SVG elements will be added here by JavaScript -->
+            </svg>
+            
+            <div class="mini-audio-viz">
+                <span class="mini-label pitch-label">Pitch</span>
+                <div class="audio-bar pitch-bar" id="pitch-bar"></div>
+                <div class="audio-bar loudness-bar" id="loudness-bar"></div>
+                <span class="mini-label loudness-label">Loudness</span>
             </div>
-        </div>
-        
-        <div class="row mt-4">
-            <div class="col-md-6">
-                <h3>Vocal Tract Features</h3>
-                <ul class="list-group" id="vocalTractFeatures">
-                    <li class="list-group-item">Upper Lip: X=<span id="ul-x-value">0.0</span>, Y=<span id="ul-y-value">0.0</span></li>
-                    <li class="list-group-item">Lower Lip: X=<span id="ll-x-value">0.0</span>, Y=<span id="ll-y-value">0.0</span></li>
-                    <li class="list-group-item">Lower Incisor: X=<span id="li-x-value">0.0</span>, Y=<span id="li-y-value">0.0</span></li>
-                    <li class="list-group-item">Tongue Tip: X=<span id="tt-x-value">0.0</span>, Y=<span id="tt-y-value">0.0</span></li>
-                    <li class="list-group-item">Tongue Blade: X=<span id="tb-x-value">0.0</span>, Y=<span id="tb-y-value">0.0</span></li>
-                    <li class="list-group-item">Tongue Dorsum: X=<span id="td-x-value">0.0</span>, Y=<span id="td-y-value">0.0</span></li>
-                </ul>            
-            </div>
-            <div class="col-md-6">
-                <h3>Source Features</h3>
-                <ul class="list-group">
-                    <li class="list-group-item">Pitch: <span id="pitch-value">0.0</span> Hz</li>
-                    <li class="list-group-item">Loudness: <span id="loudness-value">0.0</span> dB</li>
-                </ul>
+            
+            <div class="debug-toggle">
+                <input type="checkbox" id="debug-mode"> Show debug markers
             </div>
         </div>
     </div>
     
-    <!-- Bootstrap JS (needed for tabs) -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    
-    <!-- App JavaScript -->
     <script src="app.js"></script>
 </body>
 </html>
