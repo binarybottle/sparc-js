@@ -1,8 +1,14 @@
 /******************************************************************************
- * SPARC Feature Extraction - Web Client
+ * SPARC Feature Extraction - Web Client (Main Application)
  * 
- * This application provides real-time visualization of
- * speech articulatory coding features from microphone input.
+ * This file contains the main application logic for the SPARC system, handling:
+ * - User interface and visualization
+ * - Audio capture and buffering
+ * - Animation and rendering
+ * - Communication with the worker thread for ML processing
+ * 
+ * Part of the Speech Articulatory Coding (SPARC) system that provides 
+ * real-time visualization of speech articulatory features from microphone input.
 ******************************************************************************/
 
 /******************************************************************************
@@ -23,10 +29,9 @@ const config = {
 let audioContext;
 let audioStream;
 let workletNode;
-let wavlmSession = null;
-let linearModel = null;
-let linearModelWorkingMemory = null;
 let waveformHistory = Array(500).fill(0); // More points for smoother waveform
+let animationRunning = false;
+let animationFrame = null;
 let isRecording = false;
 let audioBuffer = new Float32Array(config.bufferSize);
 let audioBufferIndex = 0;
@@ -57,8 +62,10 @@ let featureHistory = {
   loudness: Array(100).fill(0)
 };
 
-// Pitch history for smoothing
-let pitchHistory = Array(5).fill(0);
+// Web Worker Management
+let SparcWorker = null;
+let workerInitialized = false;
+let pendingWorkerResponses = 0;
 
 /******************************************************************************
 * CORE UTILITY FUNCTIONS *
@@ -98,41 +105,47 @@ function initializeDefaultPositions() {
   updateCharts();
 }
 
-function calculateLoudness(audioData) {
-  // Calculate RMS loudness
-  let sum = 0;
-  for (let i = 0; i < audioData.length; i++) {
-      sum += audioData[i] * audioData[i];
-  }
-  const rms = Math.sqrt(sum / audioData.length);
-  const dbFS = 20 * Math.log10(rms);
-  
-  return dbFS;
-}
-
 function getRecentAudioBuffer() {
   // Create a new buffer with the most recent audio data
   const recentAudio = new Float32Array(config.bufferSize);
   
   // Copy from circular buffer in the correct order
   for (let i = 0; i < config.bufferSize; i++) {
-      const index = (audioBufferIndex + i) % config.bufferSize;
-      recentAudio[i] = audioBuffer[index];
+    const index = (audioBufferIndex + i) % config.bufferSize;
+    recentAudio[i] = audioBuffer[index];
   }
   
   return recentAudio;
 }
 
 // Helper function to ensure points have valid coordinates
-function sanitizePoint(point) {
+function sanitizePoint(point, prevPoint) {
   if (!point || typeof point.x !== 'number' || typeof point.y !== 'number' || 
       isNaN(point.x) || isNaN(point.y)) {
       return { x: 0, y: 0 };
   }
-  return {
+  
+  // Basic range limiting
+  let result = {
       x: Math.min(Math.max(point.x, -1.8), 1.8),
       y: Math.min(Math.max(point.y, -1.8), 1.8)
   };
+  
+  // If we have a previous point, limit the maximum change per frame
+  if (prevPoint && isRecording) {
+    const maxDelta = 0.05; // Maximum change per frame when recording
+    
+    // Limit the change in each coordinate
+    if (Math.abs(result.x - prevPoint.x) > maxDelta) {
+      result.x = prevPoint.x + Math.sign(result.x - prevPoint.x) * maxDelta;
+    }
+    
+    if (Math.abs(result.y - prevPoint.y) > maxDelta) {
+      result.y = prevPoint.y + Math.sign(result.y - prevPoint.y) * maxDelta;
+    }
+  }
+  
+  return result;
 }
 
 // Apply anatomical constraints to tongue points
@@ -212,102 +225,99 @@ function applyAnatomicalConstraints(tt, tb, td) {
 async function init() {
   updateStatus("Loading models...");
   try {
-      // Load WavLM model using the ONNX Runtime
-      updateStatus("Loading WavLM model...");
-      wavlmSession = await initOnnxRuntime();
+    // Initialize worker
+    await initSparcWorker();
+    
+    // Setup visualization
+    setupCharts();
+    
+    // Enable UI
+    document.getElementById('startButton').disabled = false;
+    updateStatus("Models loaded. Ready to start.");
+    
+    // Add event listeners
+    document.getElementById('startButton').addEventListener('click', startRecording);
+    document.getElementById('stopButton').addEventListener('click', stopRecording);
+    
+    // Initialize debug mode
+    document.getElementById('debug-mode').checked = true;
+    const debugMarkers = document.querySelectorAll('.debug-marker');
+    debugMarkers.forEach(marker => {
+      marker.style.display = 'block';
+    });
+
+    // Start animation when not recording
+    if (!isRecording) {
+      testArticulatorAnimation();
+    }
+
+  } catch (error) {
+    updateStatus("Error loading models: " + error.message);
+    console.error("Model loading error:", error);
+  }
+}
+
+// Initialize the ML worker
+function initSparcWorker() {
+  if (SparcWorker) return Promise.resolve();
+  
+  return new Promise((resolve, reject) => {
+    try {
+      console.log("Initializing ML worker...");
+      SparcWorker = new Worker('sparc-worker.js');
       
-      // Load linear model for articulation feature extraction
-      updateStatus("Loading linear projection model...");
-      await initLinearModel();
+      SparcWorker.onmessage = function(e) {
+        const message = e.data;
+        
+        switch(message.type) {
+          case 'initialized':
+            console.log("ML worker initialized successfully");
+            workerInitialized = true;
+            resolve();
+            break;
+            
+          case 'features':
+            pendingWorkerResponses--;
+            
+            // Got features from the worker
+            const { articulationFeatures, pitch, loudness } = message;
+            
+            // Update feature history
+            updateFeatureHistory(articulationFeatures, pitch, loudness);
+            
+            // Update UI
+            requestAnimationFrame(() => {
+              updateCharts();
+            });
+            break;
+            
+          case 'status':
+            console.log("Worker status:", message.message);
+            updateStatus(message.message);
+            break;
+            
+          case 'error':
+            console.error("Worker error:", message.error);
+            pendingWorkerResponses--;
+            if (!workerInitialized) {
+              reject(new Error(message.error));
+            }
+            break;
+        }
+      };
       
-      // Setup visualization
-      setupCharts();
-      
-      // Enable UI
-      document.getElementById('startButton').disabled = false;
-      updateStatus("Models loaded. Ready to start.");
-      
-      // Add event listeners
-      document.getElementById('startButton').addEventListener('click', startRecording);
-      document.getElementById('stopButton').addEventListener('click', stopRecording);
-      
-      /*/ Add debug mode toggle handler
-      if (document.getElementById('debug-mode')) {
-          document.getElementById('debug-mode').addEventListener('change', function() {
-              const debugMarkers = document.querySelectorAll('.debug-marker');
-              debugMarkers.forEach(marker => {
-                  marker.style.display = this.checked ? 'block' : 'none';
-              });
-          });
-      } */
-      document.getElementById('debug-mode').checked = true;
-      const debugMarkers = document.querySelectorAll('.debug-marker');
-      debugMarkers.forEach(marker => {
-          marker.style.display = 'block';
+      // Initialize the worker
+      SparcWorker.postMessage({
+        type: 'init',
+        onnxPath: 'models/wavlm_base_layer9_quantized.onnx',
+        linearModelPath: 'models/wavlm_linear_model.json'
       });
-
-  } catch (error) {
-      updateStatus("Error loading models: " + error.message);
-      console.error("Model loading error:", error);
-  }
-}
-
-// Initialize ONNX Runtime for SPARC
-async function initOnnxRuntime() {
-  try {
-      // Use locally hosted WASM files
-      if (window.ort && window.ort.env && window.ort.env.wasm) {
-          ort.env.wasm.wasmPaths = {
-              'ort-wasm.wasm': 'wasm/ort-wasm.wasm',
-              'ort-wasm-simd.wasm': 'wasm/ort-wasm-simd.wasm',
-              'ort-wasm-threaded.wasm': 'wasm/ort-wasm-threaded.wasm',
-              'ort-wasm-simd-threaded.wasm': 'wasm/ort-wasm-simd-threaded.wasm'
-          };
-          
-          console.log("Local WASM paths set for ONNX Runtime");
-      }
       
-      const options = {
-          executionProviders: ['wasm'],
-          graphOptimizationLevel: 'all'
-      };
-      
-      const modelPath = 'models/wavlm_base_layer9_quantized.onnx';
-      const wavlmSession = await ort.InferenceSession.create(modelPath, options);
-      
-      console.log("WavLM model loaded successfully");
-      return wavlmSession;
-  } catch (error) {
-      console.error("Failed to initialize ONNX Runtime:", error);
-      throw error;
-  }
-}
-
-// Initialize the linear model
-async function initLinearModel() {
-  try {
-      // Load the linear model weights and biases from a JSON file
-      const response = await fetch('models/wavlm_linear_model.json');
-      const modelData = await response.json();
-      
-      // Convert model data to typed arrays for better performance
-      linearModel = {
-          weights: modelData.weights.map(w => new Float32Array(w)),
-          biases: new Float32Array(modelData.biases),
-          inputDim: modelData.input_dim,
-          outputDim: modelData.output_dim,
-          metadata: modelData.metadata
-      };
-      
-      // Pre-allocate working memory for calculations
-      linearModelWorkingMemory = new Float32Array(linearModel.outputDim);
-      
-      console.log(`Linear model loaded successfully. Input dim: ${linearModel.inputDim}, Output dim: ${linearModel.outputDim}`);
-      return true;
-  } catch (error) {
-      console.error("Failed to load linear model:", error);
-      return false;
-  }
+    } catch (error) {
+      console.error("Error creating worker:", error);
+      reject(error);
+    }
+  });
 }
 
 // Setup the SVG vocal tract visualization
@@ -328,41 +338,41 @@ function setupVocalTractVisualization() {
 
 // Create static vocal tract elements
 function createStaticElements(svg) {
-  // Pharynx wall with better anatomical shape
+  // Reduced size pharynx wall with better anatomical shape
   const pharynxWall = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   pharynxWall.setAttribute('class', 'pharynx');
-  pharynxWall.setAttribute('d', 'M-1.6,-0.1 C-1.6,-0.3 -1.5,-0.5 -1.4,-0.7 C-1.3,-0.9 -1.2,-1.1 -1.0,-1.3 C-0.8,-1.5 -0.6,-1.7 -0.4,-1.8 C-0.3,-1.9 -0.2,-1.8 -0.2,-1.7 L-0.3,-1.4 L-0.5,-1.1 L-0.7,-0.8 L-1.0,-0.5 L-1.3,-0.3 Z');
+  pharynxWall.setAttribute('d', 'M-1.2,-0.2 C-1.2,-0.3 -1.15,-0.45 -1.05,-0.6 C-0.95,-0.75 -0.85,-0.9 -0.75,-1.0 C-0.6,-1.1 -0.45,-1.2 -0.3,-1.25 C-0.25,-1.3 -0.2,-1.25 -0.2,-1.2 L-0.25,-1.0 L-0.35,-0.8 L-0.5,-0.6 L-0.65,-0.4 L-0.85,-0.25 Z');
   svg.appendChild(pharynxWall);
   
-  // Hard palate with more natural curve
+  // Hard palate with more natural curve - reduced size
   const palate = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   palate.setAttribute('class', 'palate');
   palate.setAttribute('id', 'palate');
-  palate.setAttribute('d', 'M1.0,-1.25 C0.7,-1.35 0.4,-1.3 0.0,-1.15 C-0.4,-0.95 -0.8,-0.7 -1.2,-0.4');
+  palate.setAttribute('d', 'M0.9,-0.9 C0.7,-1.0 0.4,-0.95 0.1,-0.85 C-0.25,-0.75 -0.5,-0.6 -0.75,-0.4');
   svg.appendChild(palate);
   
-  // Jaw outline with more natural shape
+  // Jaw outline with more natural shape - reduced size
   const jaw = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   jaw.setAttribute('class', 'jaw');
   jaw.setAttribute('id', 'jaw');
-  jaw.setAttribute('d', 'M1.0,-0.1 C0.8,0.0 0.6,0.05 0.4,0.08 C0.2,0.1 0.0,0.11 -0.2,0.11 C-0.4,0.11 -0.6,0.09 -0.8,0.05 C-1.0,0.0 -1.2,-0.1 -1.4,-0.25');
+  jaw.setAttribute('d', 'M0.9,-0.1 C0.7,0.0 0.5,0.05 0.3,0.07 C0.1,0.08 -0.1,0.09 -0.3,0.07 C-0.5,0.05 -0.7,0.0 -0.85,-0.1 C-0.95,-0.15 -1.05,-0.2 -1.1,-0.25');
   svg.appendChild(jaw);
   
-  // Upper teeth with better shape
+  // Upper teeth with subtle shape
   const upperTeeth = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   upperTeeth.setAttribute('class', 'teeth');
-  upperTeeth.setAttribute('d', 'M0.95,-1.2 C0.97,-1.15 0.99,-1.1 0.98,-1.05 L0.98,-0.95 C0.98,-0.93 0.96,-0.9 0.93,-0.9 L0.85,-0.9 C0.83,-0.9 0.8,-0.93 0.8,-0.95 L0.8,-1.2 C0.8,-1.22 0.83,-1.25 0.85,-1.25 L0.9,-1.25 C0.92,-1.25 0.95,-1.22 0.95,-1.2 Z');
+  upperTeeth.setAttribute('d', 'M0.85,-0.8 L0.85,-0.7 L0.75,-0.7 L0.75,-0.8 Z');
   svg.appendChild(upperTeeth);
   
-  // Lower teeth with better shape
+  // Lower teeth with subtle shape
   const lowerTeeth = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   lowerTeeth.setAttribute('class', 'teeth');
-  lowerTeeth.setAttribute('d', 'M0.95,-0.15 C0.97,-0.1 0.99,-0.05 0.98,0.0 L0.98,0.1 C0.98,0.12 0.96,0.15 0.93,0.15 L0.85,0.15 C0.83,0.15 0.8,0.12 0.8,0.1 L0.8,-0.15 C0.8,-0.17 0.83,-0.2 0.85,-0.2 L0.9,-0.2 C0.92,-0.2 0.95,-0.17 0.95,-0.15 Z');
+  lowerTeeth.setAttribute('d', 'M0.85,-0.2 L0.85,-0.1 L0.75,-0.1 L0.75,-0.2 Z');
   svg.appendChild(lowerTeeth);
   
-  // Labels for orientation
-  addLabel(svg, "FRONT", 1.5, 0);
-  addLabel(svg, "BACK", -1.5, 0);
+  // Labels for orientation - moved closer to border
+  addLabel(svg, "FRONT", 0.75, 0.35);
+  addLabel(svg, "BACK", -0.75, 0.35);
 }
 
 // Create dynamic elements
@@ -407,7 +417,7 @@ function addLabel(svg, text, x, y) {
   const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
   label.setAttribute('x', x);
   label.setAttribute('y', y);
-  label.setAttribute('font-size', '0.15');
+  label.setAttribute('font-size', '0.12'); // Smaller font
   label.setAttribute('text-anchor', 'middle');
   label.setAttribute('fill', '#888');
   label.textContent = text;
@@ -522,81 +532,38 @@ function createTonguePath(tt, tb, td) {
   `;
 }
 
-// Improved lip shape creation from feature points
+// Lip shape creation from feature points
 function createLipPaths(ul, ll, li) {
   // Ensure coordinates are valid
   ul = sanitizePoint(ul);
   ll = sanitizePoint(ll);
   li = sanitizePoint(li);
   
-  // Calculate lip aperture and derived values - reduce width
-  const lipAperture = Math.max(0.03, Math.abs(ul.y - ll.y)); // Reduced from 0.05
-  const lipWidth = 0.25 + (0.1 * Math.min(1, lipAperture * 2)); // Reduced from 0.35 and 0.15
+  // Enhanced lip profile - extend back to show more realistic shape
+  // Corner points with greater horizontal extension
+  const lipExtendBack = 0.25; // How far back the lips extend from li.x
+  const backX = li.x - lipExtendBack;
   
-  // Corner points for mouth
-  const mouthCornerLeft = { 
-    x: Math.min(ul.x - lipWidth, li.x - 0.03), // Reduced from 0.05
-    y: (ul.y + ll.y) / 2 
-  };
-  
-  const mouthCornerRight = { 
-    x: Math.max(ul.x + 0.1, li.x + lipWidth), // Reduced from 0.15
-    y: (ul.y + ll.y) / 2 
-  };
-  
-  // Control points for lip curves - reduce bulge
-  const ulc1 = {
-    x: mouthCornerLeft.x + (ul.x - mouthCornerLeft.x) * 0.3,
-    y: mouthCornerLeft.y - (mouthCornerLeft.y - ul.y) * 0.15 // Reduced from 0.2
-  };
-  
-  const ulc2 = {
-    x: ul.x - (ul.x - mouthCornerLeft.x) * 0.5,
-    y: ul.y - 0.01 // Reduced from 0.02
-  };
-  
-  const ulc3 = {
-    x: ul.x + (mouthCornerRight.x - ul.x) * 0.5,
-    y: ul.y - 0.01 // Reduced from 0.02
-  };
-  
-  const ulc4 = {
-    x: mouthCornerRight.x - (mouthCornerRight.x - ul.x) * 0.3,
-    y: mouthCornerRight.y - (mouthCornerRight.y - ul.y) * 0.15 // Reduced from 0.2
-  };
-  
-  // Control points for lower lip
-  const llc1 = {
-    x: mouthCornerLeft.x + (ll.x - mouthCornerLeft.x) * 0.3,
-    y: mouthCornerLeft.y + (ll.y - mouthCornerLeft.y) * 0.15 // Reduced from 0.2
-  };
-  
-  const llc2 = {
-    x: ll.x - (ll.x - mouthCornerLeft.x) * 0.5,
-    y: ll.y + 0.01 // Reduced from 0.02
-  };
-  
-  const llc3 = {
-    x: ll.x + (mouthCornerRight.x - ll.x) * 0.5,
-    y: ll.y + 0.01 // Reduced from 0.02
-  };
-  
-  const llc4 = {
-    x: mouthCornerRight.x - (mouthCornerRight.x - ll.x) * 0.3,
-    y: mouthCornerRight.y + (ll.y - mouthCornerRight.y) * 0.15 // Reduced from 0.2
-  };
-  
-  // Generate the paths
+  // Upper lip profile path
   const upperLipPath = `
-    M ${mouthCornerLeft.x},${mouthCornerLeft.y}
-    C ${ulc1.x},${ulc1.y} ${ulc2.x},${ulc2.y} ${ul.x},${ul.y}
-    C ${ulc3.x},${ulc3.y} ${ulc4.x},${ulc4.y} ${mouthCornerRight.x},${mouthCornerRight.y}
+    M ${backX},${ul.y - 0.05}
+    Q ${li.x - lipExtendBack*0.7},${ul.y - 0.07} ${li.x - lipExtendBack*0.4},${ul.y - 0.05}
+    Q ${li.x - lipExtendBack*0.2},${ul.y - 0.02} ${ul.x},${ul.y}
+    Q ${ul.x + 0.05},${ul.y} ${ul.x + 0.1},${ul.y + 0.02}
+    L ${ul.x + 0.1},${(ul.y + ll.y)/2 - 0.02}
+    Q ${li.x - 0.05},${(ul.y + ll.y)/2 - 0.01} ${backX},${(ul.y + ll.y)/2}
+    Z
   `;
   
+  // Lower lip profile path
   const lowerLipPath = `
-    M ${mouthCornerLeft.x},${mouthCornerLeft.y}
-    C ${llc1.x},${llc1.y} ${llc2.x},${llc2.y} ${ll.x},${ll.y}
-    C ${llc3.x},${llc3.y} ${llc4.x},${llc4.y} ${mouthCornerRight.x},${mouthCornerRight.y}
+    M ${backX},${(ul.y + ll.y)/2}
+    Q ${li.x - 0.05},${(ul.y + ll.y)/2 + 0.01} ${ll.x - 0.05},${(ul.y + ll.y)/2 + 0.02}
+    L ${ll.x + 0.1},${ll.y - 0.02}
+    Q ${ll.x + 0.05},${ll.y} ${ll.x},${ll.y}
+    Q ${li.x - lipExtendBack*0.2},${ll.y + 0.02} ${li.x - lipExtendBack*0.4},${ll.y + 0.05}
+    Q ${li.x - lipExtendBack*0.7},${ll.y + 0.07} ${backX},${ll.y + 0.05}
+    Z
   `;
   
   return {
@@ -691,9 +658,16 @@ function testArticulatorAnimation() {
   const frameDuration = 500; // ms per position
   const frameTransitions = 20; // Smooth steps between positions
   
+  // Set the animation flag
+  animationRunning = true;
+
   function animateFrame() {
-    if (!document.getElementById('tongue')) return; // Stop if not on page
-    
+    // Check if we should continue animating
+    if (!document.getElementById('tongue') || isRecording || !animationRunning) {
+      animationRunning = false;
+      return; // Stop the animation if recording starts
+    }
+
     const currentVowelIdx = Math.floor(frame / frameTransitions) % vowelPositions.length;
     const nextVowelIdx = (currentVowelIdx + 1) % vowelPositions.length;
     const transitionProgress = (frame % frameTransitions) / frameTransitions;
@@ -721,15 +695,13 @@ function testArticulatorAnimation() {
     updateChartsWithDebug(); // Use the new function that adds debug lines
     
     frame++;
-    setTimeout(animateFrame, frameDuration / frameTransitions);
+    // Store the animation frame ID so we can cancel it
+    animationFrame = setTimeout(animateFrame, frameDuration / frameTransitions);
   }
   
   // Start animation
   animateFrame();
 }
-
-// Call to test without microphone
-testArticulatorAnimation();
 
 function updateDebugLines(showLines) {
   const debugLines = document.querySelectorAll('.debug-line');
@@ -840,531 +812,147 @@ registerProcessor('audio-processor', AudioProcessor);
 // Start recording
 async function startRecording() {
   try {
-      // Request microphone access
-      audioStream = await navigator.mediaDevices.getUserMedia({
-          audio: {
-              sampleRate: config.sampleRate,
-              channelCount: 1,
-              echoCancellation: true,
-              noiseSuppression: true
-          }
-      });
+    // Stop any running test animation
+    animationRunning = false;
+    if (animationFrame) {
+      clearTimeout(animationFrame);
+      animationFrame = null;
+    }
       
-      // Create audio context
-      audioContext = new (window.AudioContext || window.webkitAudioContext)({
-          sampleRate: config.sampleRate
-      });
-      
-      // Check if AudioWorklet is supported
-      if (audioContext.audioWorklet) {
-          // Create a Blob URL for the processor code
-          const blob = new Blob([audioProcessorCode], { type: 'application/javascript' });
-          const processorUrl = URL.createObjectURL(blob);
-          
-          // Add the module to the audio worklet
-          await audioContext.audioWorklet.addModule(processorUrl);
-          
-          // Create audio worklet node
-          workletNode = new AudioWorkletNode(audioContext, 'audio-processor');
-          
-          // Handle messages from the audio processor
-          workletNode.port.onmessage = (event) => {
-              if (event.data.audio) {
-                  processAudioData(event.data.audio);
-              }
-          };
-          
-          // Connect nodes
-          const source = audioContext.createMediaStreamSource(audioStream);
-          source.connect(workletNode);
-          workletNode.connect(audioContext.destination);
-          
-      } else {
-          // Fallback to ScriptProcessorNode for older browsers
-          console.warn("AudioWorklet not supported, falling back to ScriptProcessorNode");
-          const source = audioContext.createMediaStreamSource(audioStream);
-          const processor = audioContext.createScriptProcessor(config.frameSize, 1, 1);
-          processor.onaudioprocess = (event) => {
-              const input = event.inputBuffer.getChannelData(0);
-              processAudioData(input);
-          };
-          source.connect(processor);
-          processor.connect(audioContext.destination);
-          workletNode = processor; // Store for cleanup
+    // Request microphone access
+    audioStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        sampleRate: config.sampleRate,
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true
       }
+    });
       
-      // Update UI
-      isRecording = true;
-      document.getElementById('startButton').disabled = true;
-      document.getElementById('stopButton').disabled = false;
-      updateStatus("Recording...");
+    // Create audio context
+    audioContext = new (window.AudioContext || window.webkitAudioContext)({
+      sampleRate: config.sampleRate
+    });
       
-      // Start feature extraction loop
-      extractFeaturesLoop();
+    // Check if AudioWorklet is supported
+    if (audioContext.audioWorklet) {
+      // Create a Blob URL for the processor code
+      const blob = new Blob([audioProcessorCode], { type: 'application/javascript' });
+      const processorUrl = URL.createObjectURL(blob);
+          
+      // Add the module to the audio worklet
+      await audioContext.audioWorklet.addModule(processorUrl);
+          
+      // Create audio worklet node
+      workletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+          
+      // Handle messages from the audio processor
+      workletNode.port.onmessage = (event) => {
+        if (event.data.audio) {
+          processAudioData(event.data.audio);
+        }
+      };
+          
+      // Connect nodes
+      const source = audioContext.createMediaStreamSource(audioStream);
+      source.connect(workletNode);
+      workletNode.connect(audioContext.destination);
+          
+    } else {
+      // Fallback to ScriptProcessorNode for older browsers
+      console.warn("AudioWorklet not supported, falling back to ScriptProcessorNode");
+      const source = audioContext.createMediaStreamSource(audioStream);
+      const processor = audioContext.createScriptProcessor(config.frameSize, 1, 1);
+      processor.onaudioprocess = (event) => {
+        const input = event.inputBuffer.getChannelData(0);
+        processAudioData(input);
+      };
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+      workletNode = processor; // Store for cleanup
+    }
+      
+    // Update UI
+    isRecording = true;
+    document.getElementById('startButton').disabled = true;
+    document.getElementById('stopButton').disabled = false;
+    updateStatus("Recording...");
+      
+    // Start feature extraction loop
+    extractFeaturesLoop();
   } catch (error) {
-      updateStatus("Error starting recording: " + error.message);
-      console.error("Recording error:", error);
+    updateStatus("Error starting recording: " + error.message);
+    console.error("Recording error:", error);
   }
 }
 
 function stopRecording() {
   if (audioStream) {
-      // Stop all tracks in the stream
-      audioStream.getTracks().forEach(track => track.stop());
+    // Stop all tracks in the stream
+    audioStream.getTracks().forEach(track => track.stop());
       
-      // Disconnect audio processor
-      if (workletNode) {
-          workletNode.disconnect();
-          workletNode = null;
-      }
+    // Disconnect audio processor
+    if (workletNode) {
+      workletNode.disconnect();
+      workletNode = null;
+    }
       
-      // Close audio context
-      if (audioContext) {
-          audioContext.close();
-          audioContext = null;
-      }
+    // Close audio context
+    if (audioContext) {
+      audioContext.close();
+      audioContext = null;
+    }
       
-      // Update UI
-      isRecording = false;
-      document.getElementById('startButton').disabled = false;
-      document.getElementById('stopButton').disabled = true;
-      updateStatus("Recording stopped.");
+    // Update UI
+    isRecording = false;
+    document.getElementById('startButton').disabled = false;
+    document.getElementById('stopButton').disabled = true;
+    updateStatus("Recording stopped.");
+
+    // After stopping recording, restart the animation if not already running
+    if (!animationRunning) {
+      testArticulatorAnimation();
+    }
   }
 }
 
 function processAudioData(audioData) {
   // Add to circular buffer
   for (let i = 0; i < audioData.length; i++) {
-      audioBuffer[audioBufferIndex] = audioData[i];
-      audioBufferIndex = (audioBufferIndex + 1) % config.bufferSize;
-  }
-  
-  // We don't need waveform visualization anymore
-}
-
-/******************************************************************************
-* FEATURE EXTRACTION *
-******************************************************************************/
-
-// ----- WavLM & Linear Projection ----- 
-
-// Process audio through WavLM model
-async function extractWavLMFeatures(audioData, session) {
-  try {
-      // Ensure audioData is a Float32Array of the right length
-      const inputLength = 16000; // 1 second at 16kHz
-      
-      // Create a properly sized array
-      const inputData = new Float32Array(inputLength);
-      
-      // Copy available data (with zero-padding if needed)
-      const copyLength = Math.min(audioData.length, inputLength);
-      for (let i = 0; i < copyLength; i++) {
-          inputData[i] = audioData[i];
-      }
-      
-      // Create tensor with the shape the model expects
-      const inputTensor = new ort.Tensor('float32', inputData, [1, inputLength]);
-      
-      // Run inference
-      const feeds = {};
-      feeds[session.inputNames[0]] = inputTensor;
-      
-      const outputData = await session.run(feeds);
-      
-      // Extract the output tensor
-      let output = outputData[session.outputNames[0]];
-      
-      // Apply Butterworth filtering (10Hz cutoff as in the Python version)
-      output = filterWavLMFeatures(output);
-      
-      return output;
-  } catch (error) {
-      console.error("Error in WavLM feature extraction:", error);
-      throw error;
+    audioBuffer[audioBufferIndex] = audioData[i];
+    audioBufferIndex = (audioBufferIndex + 1) % config.bufferSize;
   }
 }
 
-// Extract articulation features from WavLM output
-function extractArticulationFeatures(wavlmFeatures) {
-  try {
-      if (!linearModel) {
-          console.error("Linear model not loaded");
-          return null;
-      }
-      // Extract the output tensor data from ONNX model output
-      const features = wavlmFeatures.data;
-      const dims = wavlmFeatures.dims;
-
-      // WavLM outputs [batch_size, sequence_length, hidden_size]
-      // Take the middle frame as the current representation
-      const batchSize = dims[0];  // Should be 1 for real-time
-      const seqLength = dims[1];  // Number of frames
-      const hiddenSize = dims[2]; // 768 for WavLM base
-
-      // Take the middle frame for real-time feedback
-      const middleFrameIdx = Math.floor(seqLength / 2);
-      const startIdx = middleFrameIdx * hiddenSize;
-      
-      // Apply the linear model with optimized matrix multiplication
-      // Compute y = Wx + b where W is weights, x is features, b is bias
-      const output = linearModelWorkingMemory;
-      
-      // First set output to bias values
-      output.set(linearModel.biases);
-      
-      // Then add the weighted input features
-      for (let i = 0; i < linearModel.outputDim; i++) {
-          const weights = linearModel.weights[i];
-          for (let j = 0; j < hiddenSize; j++) {
-              output[i] += weights[j] * features[startIdx + j];
-          }
-      }
-      
-      // Map the output to articulators
-      const articulationFeatures = {
-        ul: {x: output[0], y: output[1]},
-        ll: {x: output[2], y: output[3]},
-        li: {x: output[4], y: output[5]},
-        tt: {x: output[6], y: output[7]},
-        tb: {x: output[8], y: output[9]},
-        td: {x: output[10], y: output[11]}
-      };
-
-      // Apply scaling and offsets to map to SVG coordinate space
-      const scaleFactorX = 1.0;
-      const scaleFactorY = 1.0;
-      const offsetX = 0.0;      
-      const offsetY = 0.0;      
-
-      for (const key in articulationFeatures) {
-        articulationFeatures[key].x = articulationFeatures[key].x * scaleFactorX + offsetX;
-        articulationFeatures[key].y = articulationFeatures[key].y * scaleFactorY + offsetY;
-      }
-
-      return articulationFeatures;
-  } catch (error) {
-      console.error("Error in articulation feature extraction:", error);
-      return null;
-  }
-}
-
-// ----- Pitch Detection ----- 
-
-// YIN pitch detection implementation (based on algorithm by de Cheveigné and Kawahara)
-class YINPitchDetector {
-  constructor(options = {}) {
-      this.sampleRate = options.sampleRate || 16000;
-      this.threshold = options.threshold || 0.15;
-      this.minFrequency = options.minFrequency || 70;
-      this.maxFrequency = options.maxFrequency || 400;
-      
-      // Pre-calculate some values based on our constraints
-      this.minPeriod = Math.floor(this.sampleRate / this.maxFrequency);
-      this.maxPeriod = Math.floor(this.sampleRate / this.minFrequency);
-  }
-  
-  detect(audioBuffer) {
-    // Ensure we have a Float32Array
-    const buffer = audioBuffer instanceof Float32Array ? audioBuffer : new Float32Array(audioBuffer);
-    
-    // Use a reasonable window size for speech
-    const bufferSize = Math.min(buffer.length, 2048);
-    
-    // Calculate difference function (step 1 & 2 of YIN algorithm)
-    const yinBuffer = new Float32Array(bufferSize / 2);
-    
-    // Step 1: Autocorrelation method
-    for (let tau = 0; tau < yinBuffer.length; tau++) {
-        yinBuffer[tau] = 0;
-        
-        for (let j = 0; j < yinBuffer.length; j++) {
-            const delta = buffer[j] - buffer[j + tau];
-            yinBuffer[tau] += delta * delta;
-        }
-    }
-    
-    // Step 2: Cumulative mean normalized difference
-    yinBuffer[0] = 1;
-    let runningSum = 0;
-    for (let tau = 1; tau < yinBuffer.length; tau++) {
-        runningSum += yinBuffer[tau];
-        if (runningSum === 0) {
-            yinBuffer[tau] = 1;
-        } else {
-            yinBuffer[tau] *= tau / runningSum;
-        }
-    }
-    
-    // Step 3: Find the first minimum below the threshold
-    let minTau = 0;
-    let minVal = 1000; // Initialize with a value higher than possible values
-    
-    // Only look for minima between our min and max period
-    for (let tau = this.minPeriod; tau <= this.maxPeriod && tau < yinBuffer.length; tau++) {
-        if (yinBuffer[tau] < minVal) {
-            minVal = yinBuffer[tau];
-            minTau = tau;
-        }
-        
-        if (minVal < this.threshold) {
-            // Found a minimum below threshold
-            
-            // Step 4: Interpolate for better accuracy
-            const exactTau = this.parabolicInterpolation(yinBuffer, minTau);
-            
-            // Convert period to frequency
-            const frequency = this.sampleRate / exactTau;
-            
-            return frequency;
-        }
-    }
-    
-    // If no minimum found below threshold, check the lowest value
-    if (minTau > 0) {
-        // Convert to frequency
-        const frequency = this.sampleRate / minTau;
-        
-        // Only return if confidence is reasonable
-        if (minVal < 0.3) {
-            return frequency;
-        }
-    }
-    
-    // No pitch detected
-    return 0;
-}
-
-parabolicInterpolation(array, position) {
-    // Handle edge cases
-    if (position === 0 || position === array.length - 1) {
-        return position;
-    }
-    
-    // Quadratic interpolation using the point and its neighbors
-    const x1 = position - 1;
-    const x2 = position;
-    const x3 = position + 1;
-    
-    const y1 = array[x1];
-    const y2 = array[x2];
-    const y3 = array[x3];
-    
-    // Fit a parabola: y = a*x^2 + b*x + c
-    const a = (y3 + y1 - 2 * y2) / 2;
-    const b = (y3 - y1) / 2;
-    
-    if (a === 0) {
-        // If a is zero, the parabola is actually a line
-        return position;
-    }
-    
-    // The minimum of the parabola is at: x = -b / (2*a)
-    const exactPosition = x2 - b / (2 * a);
-    
-    return exactPosition;
-}
-}
-
-// Function to extract pitch using our YIN implementation
-function extractPitch(audioData) {
-try {
-    // Create detector if it doesn't exist yet
-    if (!window.yinDetector) {
-        window.yinDetector = new YINPitchDetector({
-            sampleRate: config.sampleRate,
-            threshold: 0.15,  // YIN threshold (lower = stricter)
-            minFrequency: 70, // Min frequency for speech
-            maxFrequency: 400 // Max frequency for speech
-        });
-    }
-    
-    // Extract a smaller window from the audio buffer for efficiency
-    const bufferSize = Math.min(audioData.length, 2048);
-    const startIdx = Math.floor((audioData.length - bufferSize) / 2);
-    const audioSlice = audioData.slice(startIdx, startIdx + bufferSize);
-    
-    // Detect pitch
-    const pitch = window.yinDetector.detect(audioSlice);
-    
-    return pitch || 0;
-} catch (error) {
-    console.error("Pitch detection error:", error);
-    return 0;
-}
-}
-
-// Smoothed version with history for stable output
-function extractPitchSmoothed(audioData) {
-const rawPitch = extractPitch(audioData);
-
-// Update history
-pitchHistory.push(rawPitch);
-pitchHistory.shift();
-
-// Filter out zeros for median calculation
-const nonZeroPitches = pitchHistory.filter(p => p > 0);
-
-if (nonZeroPitches.length === 0) {
-    return 0;
-}
-
-// Use median for smoothing (more robust than average)
-const sortedPitches = [...nonZeroPitches].sort((a, b) => a - b);
-const medianPitch = sortedPitches[Math.floor(sortedPitches.length / 2)];
-
-return medianPitch;
-}
-
-// ----- Filtering ----- 
-
-// Butterworth filter implementation with pre-computed coefficients for a 10Hz cutoff at 50Hz sample rate
-class LowpassFilter {
-constructor() {
-    // Pre-computed coefficients for a 5th order Butterworth low-pass filter
-    // with 10Hz cutoff at 50Hz sample rate
-    this.b = [0.0008, 0.0039, 0.0078, 0.0078, 0.0039, 0.0008];
-    this.a = [1.0000, -3.0756, 3.8289, -2.3954, 0.7475, -0.0930];
-    
-    // Initialize delay lines
-    this.x_history = new Float32Array(this.b.length).fill(0);
-    this.y_history = new Float32Array(this.a.length-1).fill(0);
-}
-
-// Process a single sample
-processSample(x) {
-    // Shift x history
-    for (let i = this.x_history.length - 1; i > 0; i--) {
-        this.x_history[i] = this.x_history[i-1];
-    }
-    this.x_history[0] = x;
-    
-    // Apply filter
-    let y = 0;
-    for (let i = 0; i < this.b.length; i++) {
-        y += this.b[i] * this.x_history[i];
-    }
-    
-    for (let i = 0; i < this.y_history.length; i++) {
-        y -= this.a[i+1] * this.y_history[i];
-    }
-    
-    // Shift y history
-    for (let i = this.y_history.length - 1; i > 0; i--) {
-        this.y_history[i] = this.y_history[i-1];
-    }
-    this.y_history[0] = y;
-    
-    return y;
-}
-
-// Process an array of samples
-process(inputArray) {
-    const outputArray = new Float32Array(inputArray.length);
-    for (let i = 0; i < inputArray.length; i++) {
-        outputArray[i] = this.processSample(inputArray[i]);
-    }
-    return outputArray;
-}
-
-// Reset the filter state
-reset() {
-    this.x_history.fill(0);
-    this.y_history.fill(0);
-}
-}
-
-// For filtering WavLM feature dimensions
-function createFilterBank(numFilters) {
-const filters = [];
-for (let i = 0; i < numFilters; i++) {
-    filters.push(new LowpassFilter());
-}
-return filters;
-}
-
-// Filter WavLM features in the time dimension
-function filterWavLMFeatures(wavlmFeatures) {
-const dims = wavlmFeatures.dims;
-const data = wavlmFeatures.data;
-const batchSize = dims[0];
-const seqLength = dims[1];
-const hiddenSize = dims[2];
-
-// Only create filters when needed
-if (!window.featuresFilterBank || window.featuresFilterBank.length !== hiddenSize) {
-    window.featuresFilterBank = createFilterBank(hiddenSize);
-}
-
-// Apply filtering to each feature dimension across time
-const filteredData = new Float32Array(data.length);
-
-for (let h = 0; h < hiddenSize; h++) {
-    // Extract this feature dimension across all time steps for the first batch item
-    const featureTimeSeries = new Float32Array(seqLength);
-    for (let t = 0; t < seqLength; t++) {
-        const idx = t * hiddenSize + h; // Assuming batch size 1
-        featureTimeSeries[t] = data[idx];
-    }
-    
-    // Apply filter
-    const filteredTimeSeries = window.featuresFilterBank[h].process(featureTimeSeries);
-    
-    // Put filtered data back
-    for (let t = 0; t < seqLength; t++) {
-        const idx = t * hiddenSize + h; // Assuming batch size 1
-        filteredData[idx] = filteredTimeSeries[t];
-    }
-}
-
-return new ort.Tensor('float32', filteredData, dims);
-}
-
-// ----- Main Extraction Loop ----- 
-
+// Feature extraction loop using worker
 async function extractFeaturesLoop() {
-if (!isRecording) return;
-
-try {
-    // Get the latest 1 second of audio
+  if (!isRecording) return;
+  
+  try {
+    // Schedule next iteration first
+    setTimeout(extractFeaturesLoop, config.updateInterval);
+    
+    // If we have too many pending responses, skip this frame
+    if (pendingWorkerResponses > 2) {
+      console.warn("Skipping frame, too many pending responses:", pendingWorkerResponses);
+      return;
+    }
+    
+    // Get the latest audio
     const recentAudio = getRecentAudioBuffer();
     
-    // Extract WavLM features using the new function
-    const wavlmOutput = await extractWavLMFeatures(recentAudio, wavlmSession);
+    // Send to worker
+    SparcWorker.postMessage({
+      type: 'process',
+      audio: recentAudio.buffer,
+      config: config
+    }, [recentAudio.buffer.slice().buffer]); // Clone and transfer buffer ownership
     
-    // The wavlmOutput is already the Layer 9 features since your model is truncated
-    // You can now apply your linear projection to get articulatory features
-    const articulationFeatures = extractArticulationFeatures(wavlmOutput);
+    pendingWorkerResponses++;
     
-    if (!articulationFeatures) {
-        console.error("Failed to extract articulation features");
-        setTimeout(extractFeaturesLoop, config.updateInterval);
-        return;
-    }
-    
-    // Extract pitch based on configuration
-    let pitch = 0;
-    if (config.extractPitchFn === 1) {
-        pitch = extractPitch(recentAudio);
-    } else if (config.extractPitchFn === 2) {
-        pitch = extractPitchSmoothed(recentAudio);
-    }
-    
-    // Calculate loudness
-    const loudness = calculateLoudness(recentAudio);
-    
-    // Update feature history
-    updateFeatureHistory(articulationFeatures, pitch, loudness);
-    
-    // Update UI
-    updateCharts();
-    
-} catch (error) {
+  } catch (error) {
     console.error("Feature extraction error:", error);
-}
-
-// Schedule next extraction
-setTimeout(extractFeaturesLoop, config.updateInterval);
+  }
 }
 
 /******************************************************************************
@@ -1425,7 +1013,8 @@ function updateCharts() {
 
 function updateFeatureHistory(articulationFeatures, pitch, loudness) {
   // Smoothing factor (0-1, lower = smoother)
-  const alpha = 0.3;
+  // Adaptive smoothing - more smoothing when recording
+  const alpha = isRecording ? 0.1 : 0.3; // Lower alpha = more smoothing
 
   // Initialize smoothed features if they're all zeros
   if (smoothedFeatures.ul_x === 0 && smoothedFeatures.ul_y === 0) {
@@ -1482,11 +1071,11 @@ function updateFeatureHistory(articulationFeatures, pitch, loudness) {
 }
 
 /******************************************************************************
-* 7. EVENT LISTENERS *
+* EVENT LISTENERS *
 ******************************************************************************/
 document.addEventListener('DOMContentLoaded', function() {
-init().catch(error => {
+  init().catch(error => {
     console.error("Error during initialization:", error);
     updateStatus("Initialization error: " + error.message);
-});
+  });
 });

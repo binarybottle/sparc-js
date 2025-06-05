@@ -50,47 +50,39 @@
             stroke: #E74C3C;
             stroke-width: 0.01;
             opacity: 0.9;
-            z-index: 10; /* Try to ensure lips appear above other elements */
         }
 
         .debug-marker {
+            r: 0.025; /* Smaller markers */
             stroke-width: 0.005;
-            stroke: white;
-            z-index: 100; /* Ensure markers appear on top */
         }
 
         .debug-line {
-        stroke: #aaa;
-        stroke-width: 0.01;
-        stroke-dasharray: 0.03;
-        opacity: 0.5;
+            stroke: #aaa;
+            stroke-width: 0.01;
+            stroke-dasharray: 0.03;
+            opacity: 0.5;
         }
 
-        .palate {
-            fill: none;
-            stroke: #555;
-            stroke-width: 2px;
-        }
-        
-        .jaw {
-            fill: none;
-            stroke: #555;
-            stroke-width: 2px;
-        }
-        
-        .teeth {
-            fill: #FFF;
-            stroke: #DDD;
-            stroke-width: 1px;
-        }
-        
         .pharynx {
             fill: #FFDDDD;
             stroke: #E74C3C;
-            stroke-width: 1px;
+            stroke-width: 0.01;
             opacity: 0.5;
         }
-        
+
+        .palate, .jaw {
+            fill: none;
+            stroke: #777;
+            stroke-width: 0.01;
+        }
+
+        .teeth {
+            fill: #FFF;
+            stroke: #DDD;
+            stroke-width: 0.005;
+        }
+         
         /* Mini audio visualization */
         .mini-audio-viz {
             position: absolute;
@@ -117,13 +109,14 @@
         }
         
         .pitch-bar {
-            background: linear-gradient(to top, #3498db, #9b59b6);
+            background-color: #3498db; /* Solid blue instead of gradient */
         }
-        
+
         .loudness-bar {
-            background: linear-gradient(to top, #2ecc71, #f1c40f);
+            background-color: #2ecc71; /* Solid green instead of gradient */
         }
         
+        /* Mini labels */        
         .mini-label {
             position: absolute;
             color: #333;

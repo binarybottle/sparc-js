@@ -68,15 +68,15 @@ let articulatorsChart;
 // Initialize ONNX Runtime for SPARC
 async function initOnnxRuntime() {
     try {
-      // Use locally hosted WASM files
       if (window.ort && window.ort.env && window.ort.env.wasm) {
-        ort.env.wasm.wasmPaths = {
-          'ort-wasm.wasm': '../wasm/ort-wasm.wasm',
-          'ort-wasm-simd.wasm': '../wasm/ort-wasm-simd.wasm',
-          'ort-wasm-threaded.wasm': '../wasm/ort-wasm-threaded.wasm',
-          'ort-wasm-simd-threaded.wasm': '../wasm/ort-wasm-simd-threaded.wasm'
-        };
-        
+        self.ort.env.wasm.wasmPaths = {
+            'ort-wasm.wasm': 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort-wasm.wasm',
+            'ort-wasm-simd.wasm': 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort-wasm-simd.wasm',
+            'ort-wasm-threaded.wasm': 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort-wasm-threaded.wasm',
+            'ort-wasm-simd-threaded.wasm': 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm',
+            'ort-wasm-simd-threaded.jsep.mjs': 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.mjs',
+            'ort-wasm-threaded.jsep.mjs': 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort-wasm-threaded.jsep.mjs'
+        };        
         console.log("Local WASM paths set for ONNX Runtime");
       }
       
