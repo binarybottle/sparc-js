@@ -11,6 +11,21 @@
  * real-time visualization of speech articulatory features from microphone input.
 ******************************************************************************/
 
+function workerDebugLog(message, data = null) {
+  const timestamp = new Date().toLocaleTimeString();
+  if (data) {
+    console.log(`[${timestamp}] WORKER DEBUG: ${message}`, data);
+  } else {
+    console.log(`[${timestamp}] WORKER DEBUG: ${message}`);
+  }
+  
+  // Also send debug messages back to main thread
+  self.postMessage({
+    type: 'debug',
+    message: `${message}${data ? ': ' + JSON.stringify(data, null, 2) : ''}`
+  });
+}
+
 // Load ONNX runtime in the worker
 importScripts('https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js');
 
@@ -27,28 +42,60 @@ let featuresFilterBank = null;
 // Handle messages from main thread
 self.onmessage = async function(e) {
   const message = e.data;
+  workerDebugLog(`Received message: ${message.type}`);
   
   switch(message.type) {
     case 'init':
+      workerDebugLog("Starting initialization...");
       await initializeModels(message.onnxPath, message.linearModelPath);
       break;
-      
+
     case 'process':
       if (!initialized) {
+        workerDebugLog("ERROR: Worker not initialized");
         self.postMessage({ type: 'error', error: 'Worker not initialized' });
         return;
       }
       
-      // Process the audio data
-      const audioData = new Float32Array(message.audio);
+      // Process the audio data - handle both ArrayBuffer and Float32Array
+      let audioData;
+      if (message.audio instanceof ArrayBuffer) {
+        audioData = new Float32Array(message.audio);
+      } else if (message.audio instanceof Float32Array) {
+        audioData = message.audio;
+      } else {
+        // Handle plain array case
+        audioData = new Float32Array(message.audio);
+      }
+      
       const config = message.config;
+      
+      workerDebugLog(`Processing audio: ${audioData.length} samples`);
+      
+      // Check audio data quality
+      const audioMax = Math.max(...audioData);
+      const audioMin = Math.min(...audioData);
+      const audioRMS = Math.sqrt(audioData.reduce((sum, x) => sum + x*x, 0) / audioData.length);
+      
+      workerDebugLog("Audio stats", {
+        length: audioData.length,
+        max: audioMax.toFixed(4),
+        min: audioMin.toFixed(4),
+        rms: audioRMS.toFixed(4)
+      });
       
       try {
         // Extract features
+        workerDebugLog("Starting WavLM feature extraction...");
         const wavlmOutput = await extractWavLMFeatures(audioData, wavlmSession);
+        workerDebugLog("WavLM extraction complete");
+        
+        workerDebugLog("Starting articulation feature extraction...");
         const articulationFeatures = extractArticulationFeatures(wavlmOutput);
+        workerDebugLog("Articulation extraction complete");
         
         if (!articulationFeatures) {
+          workerDebugLog("ERROR: Failed to extract articulation features");
           self.postMessage({ 
             type: 'error', 
             error: 'Failed to extract articulation features' 
@@ -57,25 +104,32 @@ self.onmessage = async function(e) {
         }
         
         // Extract pitch
+        workerDebugLog("Starting pitch extraction...");
         let pitch = 0;
         if (config.extractPitchFn === 1) {
           pitch = extractPitch(audioData);
         } else if (config.extractPitchFn === 2) {
           pitch = extractPitchSmoothed(audioData);
         }
+        workerDebugLog(`Pitch extracted: ${pitch}`);
         
         // Calculate loudness
+        workerDebugLog("Calculating loudness...");
         const loudness = calculateLoudness(audioData);
+        workerDebugLog(`Loudness calculated: ${loudness}`);
         
         // Send results back to main thread
+        workerDebugLog("Sending results back to main thread");
         self.postMessage({
           type: 'features',
           articulationFeatures: articulationFeatures,
           pitch: pitch,
           loudness: loudness
         });
+        workerDebugLog("Results sent successfully");
       }
       catch (error) {
+        workerDebugLog("Processing error", error);
         self.postMessage({ 
           type: 'error', 
           error: 'Processing error: ' + error.message 
@@ -88,20 +142,14 @@ self.onmessage = async function(e) {
 // Initialize the models
 async function initializeModels(onnxPath, linearModelPath) {
   try {
+    workerDebugLog("Configuring ONNX Runtime environment...");
+    
     // Configure ONNX Runtime environment BEFORE creating session
     self.ort.env.wasm.numThreads = 1;
     self.ort.env.wasm.simd = false;
     
     // Set WASM paths to CDN
     self.ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/';
-    
-    // Alternative: Set individual paths
-    /*
-    self.ort.env.wasm.wasmPaths = {
-      'ort-wasm.wasm': 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort-wasm.wasm',
-      'ort-wasm-simd.wasm': 'https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort-wasm-simd.wasm'
-    };
-    */
     
     const options = {
       executionProviders: ['wasm'],
@@ -110,29 +158,61 @@ async function initializeModels(onnxPath, linearModelPath) {
       executionMode: 'sequential'
     };
     
+    workerDebugLog("ONNX Runtime configured, starting model loading...");
+    
     // Load the WavLM model
     self.postMessage({ type: 'status', message: 'Loading WavLM model...' });
-    wavlmSession = await ort.InferenceSession.create(onnxPath, options);
+    workerDebugLog(`Loading WavLM model from: ${onnxPath}`);
+    
+    try {
+      wavlmSession = await ort.InferenceSession.create(onnxPath, options);
+      workerDebugLog("WavLM model loaded successfully");
+      workerDebugLog("Model input names", wavlmSession.inputNames);
+      workerDebugLog("Model output names", wavlmSession.outputNames);
+    } catch (modelError) {
+      workerDebugLog("Failed to load WavLM model", modelError);
+      throw new Error(`Failed to load WavLM model: ${modelError.message}`);
+    }
     
     // Load the linear model
     self.postMessage({ type: 'status', message: 'Loading linear projection model...' });
-    const response = await fetch(linearModelPath);
-    const modelData = await response.json();
+    workerDebugLog(`Loading linear model from: ${linearModelPath}`);
     
-    linearModel = {
-      weights: modelData.weights.map(w => new Float32Array(w)),
-      biases: new Float32Array(modelData.biases),
-      inputDim: modelData.input_dim,
-      outputDim: modelData.output_dim,
-      metadata: modelData.metadata
-    };
-    
-    linearModelWorkingMemory = new Float32Array(linearModel.outputDim);
+    try {
+      const response = await fetch(linearModelPath);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      const modelData = await response.json();
+      workerDebugLog("Linear model JSON loaded", {
+        hasWeights: !!modelData.weights,
+        hasBiases: !!modelData.biases,
+        inputDim: modelData.input_dim,
+        outputDim: modelData.output_dim
+      });
+      
+      linearModel = {
+        weights: modelData.weights.map(w => new Float32Array(w)),
+        biases: new Float32Array(modelData.biases),
+        inputDim: modelData.input_dim,
+        outputDim: modelData.output_dim,
+        metadata: modelData.metadata
+      };
+      
+      linearModelWorkingMemory = new Float32Array(linearModel.outputDim);
+      workerDebugLog("Linear model initialized successfully");
+      
+    } catch (linearError) {
+      workerDebugLog("Failed to load linear model", linearError);
+      throw new Error(`Failed to load linear model: ${linearError.message}`);
+    }
     
     initialized = true;
+    workerDebugLog("All models initialized successfully");
     self.postMessage({ type: 'initialized' });
-  }
-  catch (error) {
+    
+  } catch (error) {
+    workerDebugLog("Initialization failed", error);
     self.postMessage({ 
       type: 'error', 
       error: 'Initialization error: ' + error.message
@@ -162,6 +242,8 @@ function calculateLoudness(audioData) {
 // Process audio through WavLM model
 async function extractWavLMFeatures(audioData, session) {
   try {
+    workerDebugLog("Preparing audio data for WavLM...");
+    
     // Ensure audioData is a Float32Array of the right length
     const inputLength = 16000; // 1 second at 16kHz
     
@@ -174,24 +256,35 @@ async function extractWavLMFeatures(audioData, session) {
       inputData[i] = audioData[i];
     }
     
+    workerDebugLog(`Audio prepared: ${copyLength}/${inputLength} samples copied`);
+    
     // Create tensor with the shape the model expects
     const inputTensor = new ort.Tensor('float32', inputData, [1, inputLength]);
+    workerDebugLog("Input tensor created", { shape: inputTensor.dims });
     
     // Run inference
     const feeds = {};
     feeds[session.inputNames[0]] = inputTensor;
     
+    workerDebugLog("Running WavLM inference...");
     const outputData = await session.run(feeds);
+    workerDebugLog("WavLM inference complete");
     
     // Extract the output tensor
     let output = outputData[session.outputNames[0]];
+    workerDebugLog("WavLM output tensor", { 
+      shape: output.dims, 
+      dataLength: output.data.length 
+    });
     
     // Apply Butterworth filtering (10Hz cutoff as in the Python version)
+    workerDebugLog("Applying Butterworth filtering...");
     output = filterWavLMFeatures(output);
+    workerDebugLog("Filtering complete");
     
     return output;
   } catch (error) {
-    console.error("Error in WavLM feature extraction:", error);
+    workerDebugLog("Error in WavLM feature extraction", error);
     throw error;
   }
 }

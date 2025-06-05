@@ -25,6 +25,64 @@ const config = {
   extractPitchFn: 2   // 1 for original, 2 for smoothed
 };
 
+
+// DEBUG
+// Debug logging function
+function debugLog(message, data = null) {
+  const timestamp = new Date().toLocaleTimeString();
+  if (data) {
+    console.log(`[${timestamp}] SPARC DEBUG: ${message}`, data);
+  } else {
+    console.log(`[${timestamp}] SPARC DEBUG: ${message}`);
+  }
+}
+
+// Add debug counters
+let debugCounters = {
+  audioDataReceived: 0,
+  workerMessagesSent: 0,
+  workerResponsesReceived: 0,
+  featuresUpdated: 0,
+  chartsUpdated: 0
+};
+
+// Debug status display
+function updateDebugStatus() {
+  const debugInfo = `
+    Audio Data: ${debugCounters.audioDataReceived}
+    Worker Sent: ${debugCounters.workerMessagesSent}
+    Worker Received: ${debugCounters.workerResponsesReceived}
+    Features Updated: ${debugCounters.featuresUpdated}
+    Charts Updated: ${debugCounters.chartsUpdated}
+    Pending Responses: ${pendingWorkerResponses}
+  `;
+  
+  // Update or create debug display
+  let debugDisplay = document.getElementById('debug-status');
+  if (!debugDisplay) {
+    debugDisplay = document.createElement('div');
+    debugDisplay.id = 'debug-status';
+    debugDisplay.style.position = 'fixed';
+    debugDisplay.style.left = '10px';
+    debugDisplay.style.bottom = '10px';
+    debugDisplay.style.backgroundColor = 'rgba(0,0,0,0.8)';
+    debugDisplay.style.color = 'white';
+    debugDisplay.style.padding = '10px';
+    debugDisplay.style.borderRadius = '5px';
+    debugDisplay.style.fontSize = '12px';
+    debugDisplay.style.fontFamily = 'monospace';
+    debugDisplay.style.zIndex = '1001';
+    debugDisplay.style.whiteSpace = 'pre-line';
+    document.body.appendChild(debugDisplay);
+  }
+  debugDisplay.textContent = debugInfo;
+}
+
+// Start debug status updates
+setInterval(updateDebugStatus, 500);
+
+
+
 // Global variables
 let audioContext;
 let audioStream;
@@ -66,6 +124,10 @@ let featureHistory = {
 let SparcWorker = null;
 let workerInitialized = false;
 let pendingWorkerResponses = 0;
+
+
+
+
 
 /******************************************************************************
 * CORE UTILITY FUNCTIONS *
@@ -263,40 +325,62 @@ function initSparcWorker() {
   
   return new Promise((resolve, reject) => {
     try {
-      console.log("Initializing ML worker...");
+      debugLog("Initializing ML worker...");
       SparcWorker = new Worker('sparc-worker.js');
       
       SparcWorker.onmessage = function(e) {
         const message = e.data;
+        debugLog(`Worker message received: ${message.type}`, message);
         
         switch(message.type) {
           case 'initialized':
-            console.log("ML worker initialized successfully");
+            debugLog("ML worker initialized successfully");
             workerInitialized = true;
             resolve();
+            break;
+          
+          case 'debug':
+            console.log('WORKER:', message.message);
             break;
             
           case 'features':
             pendingWorkerResponses--;
+            debugCounters.workerResponsesReceived++;
+            
+            debugLog(`Features received from worker. Pending: ${pendingWorkerResponses}`);
             
             // Got features from the worker
             const { articulationFeatures, pitch, loudness } = message;
             
+            // Log the received features for debugging
+            debugLog("Articulation features", {
+              ul: articulationFeatures.ul,
+              ll: articulationFeatures.ll,
+              li: articulationFeatures.li,
+              tt: articulationFeatures.tt,
+              tb: articulationFeatures.tb,
+              td: articulationFeatures.td
+            });
+            debugLog(`Pitch: ${pitch}, Loudness: ${loudness}`);
+            
             // Update feature history
             updateFeatureHistory(articulationFeatures, pitch, loudness);
+            debugCounters.featuresUpdated++;
             
             // Update UI
             requestAnimationFrame(() => {
               updateCharts();
+              debugCounters.chartsUpdated++;
             });
             break;
             
           case 'status':
-            console.log("Worker status:", message.message);
+            debugLog("Worker status", message.message);
             updateStatus(message.message);
             break;
             
           case 'error':
+            debugLog("Worker error", message.error);
             console.error("Worker error:", message.error);
             pendingWorkerResponses--;
             if (!workerInitialized) {
@@ -306,7 +390,13 @@ function initSparcWorker() {
         }
       };
       
+      SparcWorker.onerror = function(error) {
+        debugLog("Worker onerror event", error);
+        console.error("Worker error event:", error);
+      };
+      
       // Initialize the worker
+      debugLog("Sending init message to worker");
       SparcWorker.postMessage({
         type: 'init',
         onnxPath: 'models/wavlm_base_layer9_quantized.onnx',
@@ -314,6 +404,7 @@ function initSparcWorker() {
       });
       
     } catch (error) {
+      debugLog("Error creating worker", error);
       console.error("Error creating worker:", error);
       reject(error);
     }
@@ -812,14 +903,18 @@ registerProcessor('audio-processor', AudioProcessor);
 // Start recording
 async function startRecording() {
   try {
+    debugLog("Starting recording...");
+    
     // Stop any running test animation
     animationRunning = false;
     if (animationFrame) {
       clearTimeout(animationFrame);
       animationFrame = null;
     }
+    debugLog("Test animation stopped");
       
     // Request microphone access
+    debugLog("Requesting microphone access...");
     audioStream = await navigator.mediaDevices.getUserMedia({
       audio: {
         sampleRate: config.sampleRate,
@@ -828,23 +923,29 @@ async function startRecording() {
         noiseSuppression: true
       }
     });
+    debugLog("Microphone access granted");
       
     // Create audio context
+    debugLog("Creating audio context...");
     audioContext = new (window.AudioContext || window.webkitAudioContext)({
       sampleRate: config.sampleRate
     });
+    debugLog(`Audio context created - Sample rate: ${audioContext.sampleRate}`);
       
     // Check if AudioWorklet is supported
     if (audioContext.audioWorklet) {
+      debugLog("Using AudioWorklet");
       // Create a Blob URL for the processor code
       const blob = new Blob([audioProcessorCode], { type: 'application/javascript' });
       const processorUrl = URL.createObjectURL(blob);
           
       // Add the module to the audio worklet
       await audioContext.audioWorklet.addModule(processorUrl);
+      debugLog("AudioWorklet module added");
           
       // Create audio worklet node
       workletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+      debugLog("AudioWorklet node created");
           
       // Handle messages from the audio processor
       workletNode.port.onmessage = (event) => {
@@ -857,10 +958,11 @@ async function startRecording() {
       const source = audioContext.createMediaStreamSource(audioStream);
       source.connect(workletNode);
       workletNode.connect(audioContext.destination);
+      debugLog("Audio nodes connected");
           
     } else {
       // Fallback to ScriptProcessorNode for older browsers
-      console.warn("AudioWorklet not supported, falling back to ScriptProcessorNode");
+      debugLog("Using ScriptProcessorNode fallback");
       const source = audioContext.createMediaStreamSource(audioStream);
       const processor = audioContext.createScriptProcessor(config.frameSize, 1, 1);
       processor.onaudioprocess = (event) => {
@@ -870,6 +972,7 @@ async function startRecording() {
       source.connect(processor);
       processor.connect(audioContext.destination);
       workletNode = processor; // Store for cleanup
+      debugLog("ScriptProcessor nodes connected");
     }
       
     // Update UI
@@ -877,10 +980,14 @@ async function startRecording() {
     document.getElementById('startButton').disabled = true;
     document.getElementById('stopButton').disabled = false;
     updateStatus("Recording...");
+    debugLog("UI updated, starting feature extraction loop");
       
     // Start feature extraction loop
     extractFeaturesLoop();
+    debugLog("Feature extraction loop started");
+    
   } catch (error) {
+    debugLog("Error starting recording", error);
     updateStatus("Error starting recording: " + error.message);
     console.error("Recording error:", error);
   }
@@ -917,16 +1024,28 @@ function stopRecording() {
 }
 
 function processAudioData(audioData) {
+  debugCounters.audioDataReceived++;
+  debugLog(`Audio data received: ${audioData.length} samples`);
+  
   // Add to circular buffer
   for (let i = 0; i < audioData.length; i++) {
     audioBuffer[audioBufferIndex] = audioData[i];
     audioBufferIndex = (audioBufferIndex + 1) % config.bufferSize;
   }
+  
+  // Log audio level for debugging
+  const maxAmplitude = Math.max(...audioData);
+  if (debugCounters.audioDataReceived % 20 === 0) { // Log every 20th sample
+    debugLog(`Audio level check - Max amplitude: ${maxAmplitude.toFixed(4)}`);
+  }
 }
 
 // Feature extraction loop using worker
 async function extractFeaturesLoop() {
-  if (!isRecording) return;
+  if (!isRecording) {
+    debugLog("Extract features loop stopped - not recording");
+    return;
+  }
   
   try {
     // Schedule next iteration first
@@ -934,23 +1053,37 @@ async function extractFeaturesLoop() {
     
     // If we have too many pending responses, skip this frame
     if (pendingWorkerResponses > 2) {
-      console.warn("Skipping frame, too many pending responses:", pendingWorkerResponses);
+      debugLog(`Skipping frame, too many pending responses: ${pendingWorkerResponses}`);
       return;
     }
     
     // Get the latest audio
     const recentAudio = getRecentAudioBuffer();
     
-    // Send to worker
+    // Check if we have meaningful audio data
+    const audioMax = Math.max(...recentAudio);
+    const audioMin = Math.min(...recentAudio);
+    const audioRange = audioMax - audioMin;
+    
+    debugLog(`Sending audio to worker - Range: ${audioRange.toFixed(4)}, Max: ${audioMax.toFixed(4)}`);
+    
+    // Create a copy of the audio data for transfer to worker
+    // We need to copy the data, not transfer the original buffer
+    const audioArray = new Float32Array(recentAudio);
+    
+    // Send to worker - no need for transferable objects with a copy
     SparcWorker.postMessage({
       type: 'process',
-      audio: recentAudio.buffer,
+      audio: audioArray,
       config: config
-    }, [recentAudio.buffer.slice().buffer]); // Clone and transfer buffer ownership
+    });
     
     pendingWorkerResponses++;
+    debugCounters.workerMessagesSent++;
+    debugLog(`Worker message sent. Pending responses: ${pendingWorkerResponses}`);
     
   } catch (error) {
+    debugLog("Feature extraction error", error);
     console.error("Feature extraction error:", error);
   }
 }
