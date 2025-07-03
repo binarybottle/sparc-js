@@ -526,45 +526,59 @@ function extractPitchSmoothed(audioData) {
 
 // Main feature extraction loop
 async function extractFeaturesLoop() {
-    if (!isRecording) return;
-    
-    try {
-        // Get the latest 1 second of audio
-        const recentAudio = getRecentAudioBuffer();
-        
-        // Extract WavLM features using the new function
-        const wavlmOutput = await extractWavLMFeatures(recentAudio, wavlmSession);
-        
-        // The wavlmOutput is already the Layer 9 features since your model is truncated
-        // You can now apply your linear projection to get articulatory features
-        const articulationFeatures = extractArticulationFeatures(wavlmOutput);
-        
-        // Extract pitch based on configuration
-        let pitch = 0;
-        if (config.extractPitchFn === 1) {
-            pitch = extractPitch(recentAudio);
-        } else if (config.extractPitchFn === 2) {
-            pitch = extractPitchSmoothed(recentAudio);
-        }
-        
-        // Calculate loudness
-        const loudness = calculateLoudness(recentAudio);
-        
-        // Update feature history
-        updateFeatureHistory(articulationFeatures, pitch, loudness);
-        
-        // Update UI
-        updateFeatureUI(articulationFeatures, pitch, loudness);
-        updateCharts();
-        
-    } catch (error) {
-        console.error("Feature extraction error:", error);
+    if (!isRecording) {
+      debugLog("Extract features loop stopped - not recording");
+      return;
     }
     
-    // Schedule next extraction
-    setTimeout(extractFeaturesLoop, config.updateInterval);
-}
-
+    try {
+      // Schedule next iteration first
+      setTimeout(extractFeaturesLoop, config.updateInterval);
+      
+      // If we have too many pending responses, skip this frame
+      if (pendingWorkerResponses > 1) { // CHANGED: Reduced from 2 to 1
+        debugLog(`Skipping frame, too many pending responses: ${pendingWorkerResponses}`);
+        return;
+      }
+      
+      // Get the latest audio
+      const recentAudio = getRecentAudioBuffer();
+      
+      // Check if we have meaningful audio data
+      const audioMax = Math.max(...recentAudio);
+      const audioMin = Math.min(...recentAudio);
+      const audioRange = audioMax - audioMin;
+      
+      debugLog(`Sending audio to worker - Range: ${audioRange.toFixed(4)}, Max: ${audioMax.toFixed(4)}`);
+      
+      // Create a copy of the audio data for transfer to worker
+      const audioArray = new Float32Array(recentAudio);
+      
+      // Send to worker
+      SparcWorker.postMessage({
+        type: 'process',
+        audio: audioArray,
+        config: config,
+        sensitivityFactor: sensitivityFactor
+      });
+      
+      pendingWorkerResponses++;
+      debugCounters.workerMessagesSent++;
+      debugLog(`Worker message sent. Pending responses: ${pendingWorkerResponses}`);
+      
+      // ADD SAFETY TIMEOUT: If worker doesn't respond in 3 seconds, reset
+      setTimeout(() => {
+        if (pendingWorkerResponses > 0) {
+          debugLog("Worker response timeout, resetting counter");
+          pendingWorkerResponses = 0;
+        }
+      }, 3000);
+      
+    } catch (error) {
+      debugLog("Feature extraction error", error);
+      console.error("Feature extraction error:", error);
+    }
+  }
 function getRecentAudioBuffer() {
     // Create a new buffer with the most recent audio data
     const recentAudio = new Float32Array(config.bufferSize);
