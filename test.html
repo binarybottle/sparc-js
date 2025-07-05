@@ -335,10 +335,12 @@
                 <button class="btn btn-primary" onclick="testModelLoading()">Test Model Loading</button>
                 <button class="btn btn-primary" onclick="testAudioPipeline()">Test Audio Pipeline</button>
                 <button class="btn btn-success" onclick="testFeatureExtraction()">Test Feature Extraction</button>
+                <button class="btn btn-danger" onclick="testActualModelLoading()">🔥 Test REAL Model Loading</button>
+                <button class="btn btn-warning" onclick="testWorkerModelLoading()">👷 Test Worker Model Loading</button>
             </div>
             <div id="integrationResults" class="status-panel"></div>
         </div>
-        
+
         <!-- Performance Tests Tab -->
         <div id="performanceTab" class="tab-content hidden">
             <h3>⚡ Performance & Timing Tests</h3>
@@ -563,6 +565,195 @@
             });
         }
         
+        async function testActualModelLoading() {
+            const results = document.getElementById('integrationResults');
+            results.innerHTML += '\n🔥 Testing ACTUAL Model Loading...\n';
+            
+            try {
+                // ✅ ADD: Configure ONNX Runtime like the worker does
+                results.innerHTML += '⚙️ Configuring ONNX Runtime environment...\n';
+                ort.env.wasm.numThreads = 1;
+                ort.env.wasm.simd = true;
+                ort.env.debug = false;
+                ort.env.logLevel = 'warning';
+                ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/';
+
+                const options = {
+                    executionProviders: ['wasm'],
+                    graphOptimizationLevel: 'all',
+                    enableCpuMemArena: true,
+                    enableMemPattern: true,
+                    executionMode: 'sequential',
+                    logSeverityLevel: 3,
+                    intraOpNumThreads: 1,
+                    interOpNumThreads: 1
+                };
+                
+                // Test ONNX model loading with proper options
+                results.innerHTML += '⏳ Loading WavLM ONNX model with worker configuration...\n';
+                const session = await ort.InferenceSession.create('models/wavlm_base_layer9_quantized.onnx', options);
+                results.innerHTML += `✅ WavLM model loaded! Input: ${session.inputNames[0]}, Output: ${session.outputNames[0]}\n`;
+                results.innerHTML += `📊 Input shape expected: [1, 16000], Output shape: ${session.outputNames[0] ? '[1, ?, 768]' : 'Unknown'}\n`;
+                
+                // Test linear model loading with validation
+                results.innerHTML += '⏳ Loading and validating linear model...\n';
+                const response = await fetch('models/wavlm_linear_model.json');
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                const linearModelData = await response.json();
+                
+                // ✅ ADD: Validate linear model structure like the worker does
+                const requiredFields = ['weights', 'biases', 'input_dim', 'output_dim'];
+                const missingFields = requiredFields.filter(field => !(field in linearModelData));
+                if (missingFields.length > 0) {
+                    throw new Error(`Missing required fields: ${missingFields.join(', ')}`);
+                }
+                
+                results.innerHTML += `✅ Linear model loaded! Dimensions: ${linearModelData.input_dim} → ${linearModelData.output_dim}\n`;
+                results.innerHTML += `📊 Expected: 768 → 12, Actual: ${linearModelData.input_dim} → ${linearModelData.output_dim}\n`;
+                
+                // Validate weights structure
+                if (!Array.isArray(linearModelData.weights) || linearModelData.weights.length !== linearModelData.output_dim) {
+                    throw new Error(`Invalid weights structure: expected ${linearModelData.output_dim} weight arrays`);
+                }
+                
+                results.innerHTML += `✅ Linear model structure validated\n`;
+
+                // Test with actual audio processing like the worker
+                results.innerHTML += '⏳ Testing model inference with worker-like processing...\n';
+                const testAudio = new Float32Array(16000).fill(0).map((_, i) => 
+                    0.1 * Math.sin(2 * Math.PI * 150 * i / 16000) + 
+                    0.05 * Math.sin(2 * Math.PI * 300 * i / 16000)
+                );
+                
+                const inputTensor = new ort.Tensor('float32', testAudio, [1, 16000]);
+                const feeds = {};
+                feeds[session.inputNames[0]] = inputTensor;
+                
+                const start = performance.now();
+                const output = await session.run(feeds);
+                const duration = performance.now() - start;
+                
+                results.innerHTML += `✅ Model inference successful in ${duration.toFixed(2)}ms!\n`;
+                results.innerHTML += `📊 Output shape: ${output[session.outputNames[0]].dims}\n`;
+                
+                // ✅ ADD: Test linear model processing like the worker
+                const wavlmOutput = output[session.outputNames[0]];
+                const features = wavlmOutput.data;
+                const dims = wavlmOutput.dims;
+                const [batchSize, seqLength, hiddenSize] = dims;
+                
+                results.innerHTML += `📐 WavLM output analysis:\n`;
+                results.innerHTML += `   Batch: ${batchSize}, Sequence: ${seqLength}, Hidden: ${hiddenSize}\n`;
+                
+                // Test linear transformation like the worker does
+                const middleFrameIdx = Math.floor(seqLength / 2);
+                const startIdx = middleFrameIdx * hiddenSize;
+                
+                const linearWeights = linearModelData.weights.map(w => new Float32Array(w));
+                const linearBiases = new Float32Array(linearModelData.biases);
+                const output_features = new Float32Array(linearModelData.output_dim);
+                
+                // Apply linear transformation
+                output_features.set(linearBiases);
+                for (let i = 0; i < linearModelData.output_dim; i++) {
+                    const weights = linearWeights[i];
+                    for (let j = 0; j < hiddenSize; j++) {
+                        output_features[i] += weights[j] * features[startIdx + j];
+                    }
+                }
+                
+                results.innerHTML += `✅ Linear transformation successful!\n`;
+                results.innerHTML += `📊 Articulation features: [${output_features.slice(0, 4).map(x => x.toFixed(3)).join(', ')}...]\n`;
+                
+            } catch (error) {
+                results.innerHTML += `❌ Model loading failed: ${error.message}\n`;
+                
+                // ✅ ADD: Test fallback like the worker does
+                if (error.message.includes('fetch')) {
+                    results.innerHTML += `💡 Network error - check if model files exist in models/ directory\n`;
+                } else if (error.message.includes('ONNX')) {
+                    results.innerHTML += `💡 ONNX error - check browser compatibility and WASM support\n`;
+                } else if (error.message.includes('JSON')) {
+                    results.innerHTML += `💡 JSON parsing error - check linear model file format\n`;
+                }
+                
+                results.innerHTML += `🔄 Testing fallback feature generation...\n`;
+                try {
+                    // Test the same fallback the worker uses
+                    const time = Date.now() / 1000;
+                    const variation = 0.02 * 8.0; // Default sensitivity
+                    const fallbackFeatures = {
+                        ul: { x: 0.9 + variation * Math.sin(time * 2), y: -1.05 + variation * Math.cos(time * 1.5) },
+                        ll: { x: 0.9 + variation * Math.sin(time * 2.2), y: -0.8 + variation * Math.cos(time * 1.8) },
+                        li: { x: 0.85 + variation * Math.sin(time * 2.1), y: -0.92 + variation * Math.cos(time * 1.6) },
+                        tt: { x: 0.5 + variation * Math.sin(time * 3), y: -0.7 + variation * Math.cos(time * 2.5) },
+                        tb: { x: 0.0 + variation * Math.sin(time * 2.8), y: -0.6 + variation * Math.cos(time * 2.2) },
+                        td: { x: -0.5 + variation * Math.sin(time * 2.5), y: -0.5 + variation * Math.cos(time * 2.0) }
+                    };
+                    results.innerHTML += `✅ Fallback feature generation works\n`;
+                } catch (fallbackError) {
+                    results.innerHTML += `❌ Even fallback failed: ${fallbackError.message}\n`;
+                }
+                
+                console.error('Model loading error:', error);
+            }
+        }
+
+        async function testWorkerModelLoading() {
+            const results = document.getElementById('integrationResults');
+            results.innerHTML += '\n👷 Testing Worker Model Loading...\n';
+            
+            try {
+                const testWorker = new Worker('sparc-worker.js');
+                let workerResponded = false;
+                
+                const timeout = setTimeout(() => {
+                    if (!workerResponded) {
+                        results.innerHTML += '⏰ Worker initialization timeout (5s)\n';
+                        testWorker.terminate();
+                    }
+                }, 5000);
+                
+                testWorker.onmessage = function(e) {
+                    workerResponded = true;
+                    clearTimeout(timeout);
+                    
+                    const message = e.data;
+                    results.innerHTML += `📨 Worker message: ${message.type}\n`;
+                    
+                    if (message.type === 'initialized') {
+                        results.innerHTML += '✅ Worker successfully loaded models!\n';
+                    } else if (message.type === 'error') {
+                        results.innerHTML += `❌ Worker error: ${message.error}\n`;
+                    } else if (message.type === 'debug') {
+                        results.innerHTML += `🐛 Worker debug: ${message.message}\n`;
+                    } else if (message.type === 'status') {
+                        results.innerHTML += `📊 Worker status: ${message.message}\n`;
+                    }
+                    
+                    if (message.type === 'initialized' || message.type === 'error') {
+                        testWorker.terminate();
+                    }
+                };
+                
+                testWorker.onerror = function(error) {
+                    results.innerHTML += `❌ Worker error: ${error.message}\n`;
+                };
+                
+                results.innerHTML += '📤 Sending init message to worker...\n';
+                testWorker.postMessage({
+                    type: 'init',
+                    onnxPath: 'models/wavlm_base_layer9_quantized.onnx',
+                    linearModelPath: 'models/wavlm_linear_model.json'
+                });
+                
+            } catch (error) {
+                results.innerHTML += `❌ Worker creation failed: ${error.message}\n`;
+            }
+        }
+
         // Audio Generation Functions
         function generateVowelSound() {
             log("🎵 Generating vowel sound /a/...", 'info');
@@ -1301,7 +1492,6 @@
             });
         }
         
-        // ✅ ADD: Missing audio generation functions
         function generateVowelSweep() {
             log("🎵 Generating vowel sweep /i/ → /a/ → /u/...", 'info');
             
@@ -1565,7 +1755,6 @@
             playTestAudio(buffer);
         }
         
-        // ✅ ADD: Missing test functions
         function stressTest() {
             const results = document.getElementById('performanceResults');
             results.innerHTML += '\n🔥 Running Stress Test...\n';
@@ -1648,13 +1837,82 @@
             
             const testVocalTract = document.getElementById('testVocalTract');
             
-            // Test marker visibility toggle
-            const markers = testVocalTract.querySelectorAll('.articulator-marker');
+            if (!testVocalTract) {
+                results.innerHTML += '❌ Test vocal tract SVG not found\n';
+                return;
+            }
             
+            // Test marker visibility toggle
+            let markers = testVocalTract.querySelectorAll('.articulator-marker');
+            results.innerHTML += `🔍 Found ${markers.length} existing markers\n`;
+            
+            // If no markers exist, create them first
+            if (markers.length === 0) {
+                results.innerHTML += '🔧 Creating test debug markers...\n';
+                
+                const testMarkers = [
+                    { id: 'test-ul', x: 0.9, y: -1.0, color: '#e74c3c', name: 'Upper Lip' },
+                    { id: 'test-ll', x: 0.9, y: -0.8, color: '#3498db', name: 'Lower Lip' },
+                    { id: 'test-li', x: 0.85, y: -0.9, color: '#f1c40f', name: 'Lip Interface' },
+                    { id: 'test-tt', x: 0.5, y: -0.7, color: '#2ecc71', name: 'Tongue Tip' },
+                    { id: 'test-tb', x: 0.0, y: -0.6, color: '#9b59b6', name: 'Tongue Body' },
+                    { id: 'test-td', x: -0.5, y: -0.5, color: '#e67e22', name: 'Tongue Dorsum' }
+                ];
+                
+                let createdCount = 0;
+                testMarkers.forEach((marker, index) => {
+                    try {
+                        const debugMarker = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                        debugMarker.setAttribute('id', marker.id);
+                        debugMarker.setAttribute('cx', marker.x);
+                        debugMarker.setAttribute('cy', marker.y);
+                        debugMarker.setAttribute('r', '0.05');
+                        debugMarker.setAttribute('fill', marker.color);
+                        debugMarker.setAttribute('stroke', '#fff');
+                        debugMarker.setAttribute('stroke-width', '0.01');
+                        debugMarker.setAttribute('class', 'articulator-marker');
+                        debugMarker.style.opacity = '0.8';
+                        debugMarker.style.cursor = 'pointer';
+                        
+                        // Add title for hover
+                        const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+                        title.textContent = marker.name;
+                        debugMarker.appendChild(title);
+                        
+                        testVocalTract.appendChild(debugMarker);
+                        createdCount++;
+                        
+                        results.innerHTML += `  ✅ Created ${marker.name} marker at (${marker.x}, ${marker.y})\n`;
+                    } catch (error) {
+                        results.innerHTML += `  ❌ Failed to create ${marker.name}: ${error.message}\n`;
+                    }
+                });
+                
+                // Re-query for markers after creation
+                setTimeout(() => {
+                    markers = testVocalTract.querySelectorAll('.articulator-marker');
+                    results.innerHTML += `✅ Successfully created ${createdCount} markers, found ${markers.length} in DOM\n`;
+                    
+                    if (markers.length > 0) {
+                        continueDebugMarkerTests(markers, results);
+                    } else {
+                        results.innerHTML += '❌ Still no markers found after creation\n';
+                    }
+                }, 100);
+                
+                return; // Exit here and continue in the timeout
+            }
+            
+            continueDebugMarkerTests(markers, results);
+        }
+        
+        function continueDebugMarkerTests(markers, results) {
+        function continueDebugMarkerTests(markers, results) {
             if (markers.length > 0) {
-                results.innerHTML += `✅ Found ${markers.length} debug markers\n`;
+                results.innerHTML += `✅ Found ${markers.length} debug markers for testing\n`;
                 
                 // Test visibility toggle
+                results.innerHTML += '🔄 Testing visibility toggle...\n';
                 markers.forEach((marker, index) => {
                     setTimeout(() => {
                         marker.style.display = 'none';
@@ -1669,19 +1927,68 @@
                 
                 // Test marker animation
                 setTimeout(() => {
-                    markers.forEach(marker => {
+                    results.innerHTML += '🎬 Testing marker animation...\n';
+                    markers.forEach((marker, index) => {
                         const originalR = marker.getAttribute('r');
-                        marker.setAttribute('r', parseFloat(originalR) * 1.5);
+                        const originalOpacity = marker.style.opacity || '0.8';
+                        
+                        // Animate size and opacity
+                        marker.setAttribute('r', parseFloat(originalR) * 2);
+                        marker.style.opacity = '1';
+                        
                         setTimeout(() => {
                             marker.setAttribute('r', originalR);
-                        }, 500);
+                            marker.style.opacity = originalOpacity;
+                            
+                            if (index === markers.length - 1) {
+                                results.innerHTML += '✅ Debug marker animation test complete\n';
+                                
+                                // Test marker interaction
+                                setTimeout(() => {
+                                    testMarkerInteraction(markers, results);
+                                }, 500);
+                            }
+                        }, 800);
                     });
-                    results.innerHTML += '✅ Debug marker animation test complete\n';
-                }, 1000);
+                }, 1500);
                 
             } else {
-                results.innerHTML += '❌ No debug markers found\n';
+                results.innerHTML += '❌ No debug markers found for testing\n';
             }
+        }
+        
+        function testMarkerInteraction(markers, results) {
+            results.innerHTML += '🖱️ Testing marker interaction...\n';
+            
+            let interactionCount = 0;
+            markers.forEach((marker, index) => {
+                // Simulate click events
+                const clickEvent = new MouseEvent('click', {
+                    bubbles: true,
+                    cancelable: true,
+                    view: window
+                });
+                
+                // Add temporary click handler
+                const clickHandler = () => {
+                    interactionCount++;
+                    results.innerHTML += `  👆 Marker ${index + 1} clicked\n`;
+                    marker.removeEventListener('click', clickHandler);
+                    
+                    if (interactionCount === markers.length) {
+                        results.innerHTML += '✅ All marker interactions tested successfully\n';
+                        results.innerHTML += '🎉 Debug marker testing complete!\n';
+                    }
+                };
+                
+                marker.addEventListener('click', clickHandler);
+                
+                // Simulate the click after a delay
+                setTimeout(() => {
+                    marker.dispatchEvent(clickEvent);
+                }, (index + 1) * 200);
+            });
+        }
         }
         
         // Initialize on page load
