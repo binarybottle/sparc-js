@@ -15,7 +15,7 @@ const config = {
   processingTimeout: 3000
 };
 
-// Enhanced debug logging
+// Debug logging
 function debugLog(message, data = null) {
   const timestamp = new Date().toLocaleTimeString();
   if (data) {
@@ -25,7 +25,7 @@ function debugLog(message, data = null) {
   }
 }
 
-// Enhanced debug counters with error tracking
+// Debug counters with error tracking
 let debugCounters = {
   audioDataReceived: 0,
   workerMessagesSent: 0,
@@ -37,21 +37,8 @@ let debugCounters = {
   fallbacksUsed: 0
 };
 
-// Enhanced debug status display
+// Debug status display
 function updateDebugStatus() {
-  const debugInfo = `
-    Audio: ${debugCounters.audioDataReceived}
-    Sent: ${debugCounters.workerMessagesSent}
-    Received: ${debugCounters.workerResponsesReceived}
-    Features: ${debugCounters.featuresUpdated}
-    Charts: ${debugCounters.chartsUpdated}
-    Pending: ${pendingWorkerResponses}
-    Errors: ${debugCounters.errors}
-    Timeouts: ${debugCounters.timeouts}
-    Fallbacks: ${debugCounters.fallbacksUsed}
-    Status: ${isRecording ? 'RECORDING' : 'IDLE'}
-  `;
-  
   let debugDisplay = document.getElementById('debug-status');
   if (!debugDisplay) {
     debugDisplay = document.createElement('div');
@@ -66,7 +53,6 @@ function updateDebugStatus() {
     `;
     document.body.appendChild(debugDisplay);
   }
-  debugDisplay.textContent = debugInfo;
 }
 
 setInterval(updateDebugStatus, 500);
@@ -82,7 +68,7 @@ let isRecording = false;
 let audioBuffer = new Float32Array(config.bufferSize);
 let audioBufferIndex = 0;
 
-// Enhanced smoothed features with validation
+// Smoothed features with validation
 let smoothedFeatures = {
   ul_x: 0.9, ul_y: -1.05,
   ll_x: 0.9, ll_y: -0.8,
@@ -95,7 +81,7 @@ let smoothedFeatures = {
 let sensitivityFactor = 8.0;
 let smoothingFactor = 0.4;
 
-// Feature history with improved initialization
+// Feature history
 let featureHistory = {};
 
 function initializeFeatureHistory() {
@@ -109,7 +95,7 @@ function initializeFeatureHistory() {
   });
 }
 
-// Enhanced worker management
+// Worker management
 let SparcWorker = null;
 let workerInitialized = false;
 let pendingWorkerResponses = 0;
@@ -119,11 +105,24 @@ let workerResponseTimeouts = new Set();
 /******************************************************************************
 * UTILITY FUNCTIONS *
 ******************************************************************************/
-
 function updateStatus(message) {
   const statusElement = document.getElementById('status');
   if (statusElement) {
     statusElement.textContent = "Status: " + message;
+    
+    // Add visual indicators for errors
+    if (message.includes('ERROR') || message.includes('CRITICAL')) {
+      statusElement.style.backgroundColor = '#ffebee';
+      statusElement.style.color = '#c62828';
+      statusElement.style.fontWeight = 'bold';
+    } else if (message.includes('WARNING')) {
+      statusElement.style.backgroundColor = '#fff3e0';
+      statusElement.style.color = '#ef6c00';
+    } else {
+      statusElement.style.backgroundColor = '#e8f5e8';
+      statusElement.style.color = '#2e7d32';
+      statusElement.style.fontWeight = 'normal';
+    }
   }
 }
 
@@ -178,15 +177,19 @@ function applyAnatomicalConstraints(tt, tb, td) {
 /******************************************************************************
 * ENHANCED WORKER MANAGEMENT *
 ******************************************************************************/
-
-// Initialize the ML worker with better error handling
-function initSparcWorker() {
+// Initialize the ML worker with error handling
+async function initSparcWorker() {
   if (SparcWorker) return Promise.resolve();
   
   return new Promise((resolve, reject) => {
     try {
       debugLog("Initializing ML worker...");
       SparcWorker = new Worker('sparc-worker.js');
+      
+      const initTimeout = setTimeout(() => {
+        debugLog("❌ Worker initialization timeout - CRITICAL FAILURE");
+        reject(new Error("Worker initialization timeout - models not loading"));
+      }, 10000); // Longer timeout, but still fail hard
       
       SparcWorker.onmessage = function(e) {
         const message = e.data;
@@ -200,7 +203,8 @@ function initSparcWorker() {
         
         switch(message.type) {
           case 'initialized':
-            debugLog("Worker initialization complete");
+            debugLog("✅ Worker initialization complete");
+            clearTimeout(initTimeout);
             workerInitialized = true;
             resolve();
             break;
@@ -219,26 +223,18 @@ function initSparcWorker() {
             
           case 'error':
           case 'timeout':
-            handleWorkerError(message);
+            clearTimeout(initTimeout);
+            debugLog("❌ Worker error during initialization", message);
+            reject(new Error(`Worker error: ${message.error || 'Unknown error'}`));
             break;
         }
       };
       
       SparcWorker.onerror = function(error) {
-        debugLog("Worker error event", error);
-        debugCounters.errors++;
-        if (!workerInitialized) {
-          debugLog("Worker failed to initialize, switching to demo mode");
-          workerInitialized = true;
-          resolve();
-        }
+        clearTimeout(initTimeout);
+        debugLog("❌ Worker error event", error);
+        reject(new Error(`Worker creation failed: ${error.message}`));
       };
-      
-      const initTimeout = setTimeout(() => {
-        debugLog("Worker initialization timeout - switching to demo mode");
-        workerInitialized = true;
-        resolve();
-      }, 5000);
       
       SparcWorker.postMessage({
         type: 'init',
@@ -246,23 +242,14 @@ function initSparcWorker() {
         linearModelPath: 'models/wavlm_linear_model.json'
       });
       
-      resolve = ((originalResolve) => {
-        return () => {
-          clearTimeout(initTimeout);
-          originalResolve();
-        };
-      })(resolve);
-      
     } catch (error) {
-      debugLog("Error creating worker", error);
-      debugLog("Switching to demo mode due to worker creation error");
-      workerInitialized = true;
-      resolve();
+      debugLog("❌ Error creating worker", error);
+      reject(new Error(`Worker creation failed: ${error.message}`));
     }
   });
 }
 
-// ✅ ADD: Main thread fallback function
+// Main thread fallback function
 async function initSparcWithFallback() {
   try {
       // Try worker initialization first
@@ -305,7 +292,7 @@ async function loadModelsInMainThread() {
     }
 }
 
-// Handle worker feature responses with improved validation
+// Handle worker feature responses with validation
 function handleWorkerFeatures(message) {
   pendingWorkerResponses = Math.max(0, pendingWorkerResponses - 1);
   debugCounters.workerResponsesReceived++;
@@ -347,7 +334,7 @@ function handleWorkerFeatures(message) {
 
 // Handle worker errors with recovery
 function handleWorkerError(message) {
-  debugLog("Worker error/timeout", message);
+  debugLog("❌ Worker error - REAL PROBLEM!", message);
   debugCounters.errors++;
   
   if (message.type === 'timeout') {
@@ -356,56 +343,16 @@ function handleWorkerError(message) {
   
   pendingWorkerResponses = Math.max(0, pendingWorkerResponses - 1);
   
-  if (isRecording) {
-    const fallbackFeatures = generateLocalFallbackFeatures();
-    updateFeatureHistory(fallbackFeatures, 120 + Math.random() * 50, -25 + Math.random() * 10);
-    updateCharts();
-    debugCounters.fallbacksUsed++;
-  }
+  updateStatus(`ERROR: Worker error: ${message.error || 'Unknown error'}`);
   
   if (!workerInitialized) {
-    updateStatus("Worker initialization failed: " + message.error);
+    updateStatus("CRITICAL: Worker initialization failed: " + (message.error || 'Unknown error'));
   }
-}
-
-// Generate local fallback features
-function generateLocalFallbackFeatures() {
-  const time = Date.now() / 1000;
-  const baseFreq = 0.5;
-  const speechFreq = 2.0;
-  
-  return {
-    ul: { 
-      x: 1.0 + 0.05 * Math.sin(time * baseFreq), 
-      y: -0.95 + 0.03 * Math.cos(time * speechFreq) 
-    },
-    ll: { 
-      x: 1.0 + 0.05 * Math.sin(time * baseFreq + 0.1), 
-      y: -0.7 + 0.04 * Math.cos(time * speechFreq + 0.2) 
-    },
-    li: { 
-      x: 0.95 + 0.03 * Math.sin(time * baseFreq + 0.05), 
-      y: -0.82 + 0.02 * Math.cos(time * speechFreq + 0.1) 
-    },
-    tt: { 
-      x: 0.6 + 0.15 * Math.sin(time * speechFreq), 
-      y: -0.7 + 0.1 * Math.cos(time * speechFreq * 1.3) 
-    },
-    tb: { 
-      x: 0.0 + 0.1 * Math.sin(time * speechFreq + 0.5), 
-      y: -0.6 + 0.08 * Math.cos(time * speechFreq + 0.3) 
-    },
-    td: { 
-      x: -0.6 + 0.08 * Math.sin(time * speechFreq + 1.0), 
-      y: -0.5 + 0.06 * Math.cos(time * speechFreq + 0.7) 
-    }
-  };
 }
 
 /******************************************************************************
-* ENHANCED FEATURE EXTRACTION LOOP *
+* FEATURE EXTRACTION LOOP *
 ******************************************************************************/
-
 async function extractFeaturesLoop() {
   if (!isRecording) {
     return;
@@ -414,39 +361,31 @@ async function extractFeaturesLoop() {
   setTimeout(extractFeaturesLoop, config.updateInterval);
   
   if (!workerInitialized) {
-    const fallbackFeatures = generateLocalFallbackFeatures();
-    updateFeatureHistory(fallbackFeatures, 120 + Math.random() * 50, -25 + Math.random() * 10);
-    updateCharts();
-    debugCounters.fallbacksUsed++;
+    debugLog("❌ Worker not initialized - stopping extraction");
+    updateStatus("ERROR: ML models not loaded. Please wait for initialization or refresh.");
     return;
   }
   
   if (pendingWorkerResponses >= 1) {
-    debugLog(`Skipping frame - pending response: ${pendingWorkerResponses}`);
-    const fallbackFeatures = generateLocalFallbackFeatures();
-    updateFeatureHistory(fallbackFeatures, 120, -25);
-    updateCharts();
-    debugCounters.fallbacksUsed++;
+    debugLog(`⏳ Skipping frame - pending response: ${pendingWorkerResponses}`);
     return;
   }
   
   try {
     const recentAudio = getRecentAudioBuffer();
     if (!recentAudio || recentAudio.length === 0) {
+      debugLog("❌ No audio data available");
       return;
     }
     
     const timeoutId = setTimeout(() => {
       if (workerResponseTimeouts.has(timeoutId)) {
-        debugLog("Worker response timeout (1s)");
+        debugLog("❌ Worker response timeout (1s) - REAL PROBLEM!");
         debugCounters.timeouts++;
         pendingWorkerResponses = Math.max(0, pendingWorkerResponses - 1);
         workerResponseTimeouts.delete(timeoutId);
         
-        const fallbackFeatures = generateLocalFallbackFeatures();
-        updateFeatureHistory(fallbackFeatures, 120 + Math.random() * 50, -25 + Math.random() * 10);
-        updateCharts();
-        debugCounters.fallbacksUsed++;
+        updateStatus("ERROR: ML processing timeout. Check worker performance.");
       }
     }, 1000);
     
@@ -463,17 +402,14 @@ async function extractFeaturesLoop() {
     debugCounters.workerMessagesSent++;
     
   } catch (error) {
-    debugLog("Feature extraction error", error);
+    debugLog("❌ Feature extraction error - REAL PROBLEM!", error);
     debugCounters.errors++;
-    
-    const fallbackFeatures = generateLocalFallbackFeatures();
-    updateFeatureHistory(fallbackFeatures, 120, -25);
-    updateCharts();
-    debugCounters.fallbacksUsed++;
+    updateStatus(`ERROR: Feature extraction failed: ${error.message}`);
+    // ❌ REMOVED: Fallback on error
   }
 }
 
-// Enhanced feature history update with validation
+// Feature history update with validation
 function updateFeatureHistory(articulationFeatures, pitch, loudness) {
   try {
     if (!articulationFeatures || typeof pitch !== 'number' || typeof loudness !== 'number') {
@@ -485,12 +421,38 @@ function updateFeatureHistory(articulationFeatures, pitch, loudness) {
     
     for (const art of articulators) {
       if (articulationFeatures[art]) {
-        const newX = articulationFeatures[art].x;
-        const newY = articulationFeatures[art].y;
+        let newX = articulationFeatures[art].x;
+        let newY = articulationFeatures[art].y;
         
         if (isNaN(newX) || isNaN(newY) || !isFinite(newX) || !isFinite(newY)) {
           debugLog(`Invalid coordinates for ${art}: (${newX}, ${newY})`);
           continue;
+        }
+        
+        if (art === 'ul') {
+          // Allow lip protrusion for /u/ sounds
+          newX = Math.min(Math.max(newX, 0.7), 1.0); // Allow lips to move forward/back
+          newY = Math.min(Math.max(newY, -1.1), -0.8);
+        } else if (art === 'll') {
+          // Allow lip protrusion
+          newX = Math.min(Math.max(newX, 0.7), 1.0); // Allow lips to move forward/back
+          newY = Math.min(Math.max(newY, -0.6), -0.3);
+        } else if (art === 'li') {
+          // Allow lip interface movement
+          newX = Math.min(Math.max(newX, 0.7), 1.0); // Allow lips to move forward/back
+          newY = Math.min(Math.max(newY, -1.0), -0.4);
+        } else if (art === 'tt') {
+          // Allow tongue tip to reach teeth/alveolar ridge
+          newX = Math.min(Math.max(newX, -0.5), 0.9); // Extended from 0.8 to 0.9
+          newY = Math.min(Math.max(newY, -1.1), -0.25); // Extended range
+        } else if (art === 'tb') {
+          // Vowel space coverage
+          newX = Math.min(Math.max(newX, -0.9), 0.6); // Extended range
+          newY = Math.min(Math.max(newY, -1.15), -0.2); // Extended range
+        } else if (art === 'td') {
+          // Allow tongue dorsum to reach soft palate
+          newX = Math.min(Math.max(newX, -1.3), 0.1); // Extended back range
+          newY = Math.min(Math.max(newY, -1.05), -0.25); // Extended range
         }
         
         const oldX = smoothedFeatures[art + '_x'];
@@ -501,6 +463,22 @@ function updateFeatureHistory(articulationFeatures, pitch, loudness) {
       }
     }
     
+    // Ensure lip ordering but don't over-constrain
+    if (smoothedFeatures.ul_y >= smoothedFeatures.ll_y - 0.05) {
+      smoothedFeatures.ll_y = smoothedFeatures.ul_y + 0.05;
+    }
+    
+    // Log constraint application for debugging
+    if (debugCounters.featuresUpdated % 50 === 0) {
+      debugLog("Feature constraint check", {
+        ul_x: smoothedFeatures.ul_x.toFixed(3),
+        ll_x: smoothedFeatures.ll_x.toFixed(3),
+        tt_x: smoothedFeatures.tt_x.toFixed(3),
+        td_x: smoothedFeatures.td_x.toFixed(3)
+      });
+    }
+    
+    // Update history
     const keys = Object.keys(featureHistory);
     for (const key of keys) {
       featureHistory[key].shift();
@@ -524,15 +502,14 @@ function updateFeatureHistory(articulationFeatures, pitch, loudness) {
 /******************************************************************************
 * INITIALIZATION & SETUP *
 ******************************************************************************/
-
 function initializeDefaultPositions() {
   const defaultPositions = {
-    ul: { x: 1.0, y: -0.95 },
-    ll: { x: 1.0, y: -0.7 },
-    li: { x: 0.95, y: -0.82 },
-    tt: { x: 0.6, y: -0.7 },
-    tb: { x: 0.0, y: -0.6 },
-    td: { x: -0.6, y: -0.5 }
+    ul: { x: 0.95, y: -1.0 },   // Upper lip at front, high
+    ll: { x: 0.95, y: -0.7 },   // Lower lip at front, lower  
+    li: { x: 0.95, y: -0.85 },  // Lip interface at center
+    tt: { x: 0.6, y: -0.7 },    // Tongue tip
+    tb: { x: 0.0, y: -0.6 },    // Tongue body
+    td: { x: -0.6, y: -0.5 }    // Tongue dorsum
   };
   
   Object.keys(defaultPositions).forEach(art => {
@@ -557,43 +534,71 @@ function initializeDefaultPositions() {
   debugLog("Default positions initialized", defaultPositions);
 }
 
-// ✅ CORRECTED: Initialize application with fallback
+// Initialize application with fallback
 async function init() {
   try {
     updateStatus("Loading models...");
     
     initializeFeatureHistory();
-    await initSparcWithFallback(); // ✅ Use fallback instead of just initSparcWorker
+    
+    await initSparcWorker(); // This MUST succeed or app fails
     
     setupCharts();
     setupSensitivityControls();
-    setupTestControls();
     initializeDefaultPositions();
     
     document.getElementById('startButton').disabled = false;
-    updateStatus("Models loaded. Ready to start.");
+    updateStatus("✅ Models loaded successfully. Ready to start.");
     
     document.getElementById('startButton').addEventListener('click', startRecording);
     document.getElementById('stopButton').addEventListener('click', stopRecording);
     
-    // ✅ ADD: Setup debug mode toggle
     const debugMode = document.getElementById('debug-mode');
     if (debugMode) {
       debugMode.checked = true;
       debugMode.addEventListener('change', function() {
         toggleDebugMarkers(this.checked);
       });
-      toggleDebugMarkers(true); // Show markers initially
+      toggleDebugMarkers(true);
     }
 
+    // Only show test animation if models actually loaded
     if (!isRecording) {
       testArticulatorAnimation();
     }
 
   } catch (error) {
-    updateStatus("Error loading models: " + error.message);
-    debugLog("Model loading error", error);
+    // ❌ HARD FAILURE instead of graceful degradation
+    updateStatus(`CRITICAL ERROR: ${error.message}`);
+    debugLog("❌ Model loading failed - app cannot function", error);
     debugCounters.errors++;
+    
+    // Disable the app
+    document.getElementById('startButton').disabled = true;
+    document.getElementById('testButton').disabled = true;
+    
+    // Show clear error message
+    const errorMsg = document.createElement('div');
+    errorMsg.style.cssText = `
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      background: #ffcdd2; border: 2px solid #f44336; border-radius: 10px;
+      padding: 20px; font-size: 16px; font-weight: bold; color: #c62828;
+      z-index: 10000; text-align: center; min-width: 400px;
+    `;
+    errorMsg.innerHTML = `
+      <h3>🚨 SPARC Initialization Failed</h3>
+      <p>The ML models could not be loaded.</p>
+      <p><strong>Possible causes:</strong></p>
+      <ul style="text-align: left; margin: 10px 0;">
+        <li>Missing model files in /models/ directory</li>
+        <li>Network connectivity issues</li>
+        <li>Browser compatibility problems</li>
+        <li>ONNX Runtime not working</li>
+      </ul>
+      <p><strong>Error:</strong> ${error.message}</p>
+      <button onclick="this.parentElement.remove()" style="padding: 10px 20px; margin-top: 10px;">Close</button>
+    `;
+    document.body.appendChild(errorMsg);
   }
 }
 
@@ -623,58 +628,84 @@ function setupVocalTractVisualization() {
   debugLog("SVG visualization setup complete");
 }
 
-// ✅ FIXED: Single createStaticElements function
+// ANATOMICALLY ACCURATE VOCAL TRACT MAPPING
 function createStaticElements(svg) {
-  // Pharynx wall
-  const pharynxWall = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  pharynxWall.setAttribute('class', 'pharynx');
-  pharynxWall.setAttribute('d', 'M-1.2,-0.2 C-1.2,-0.3 -1.15,-0.45 -1.05,-0.6 C-0.95,-0.75 -0.85,-0.9 -0.75,-1.0 C-0.6,-1.1 -0.45,-1.2 -0.3,-1.25 C-0.25,-1.3 -0.2,-1.25 -0.2,-1.2 L-0.25,-1.0 L-0.35,-0.8 L-0.5,-0.6 L-0.65,-0.4 L-0.85,-0.25 Z');
-  pharynxWall.setAttribute('fill', 'none');
-  pharynxWall.setAttribute('stroke', '#666');
-  pharynxWall.setAttribute('stroke-width', '0.02');
-  svg.appendChild(pharynxWall);
+  // COORDINATE SYSTEM based on anatomical images:
+  // X: -1.5 (back of pharynx) to +1.0 (front of lips)  
+  // Y: -1.2 (palate/roof) to -0.2 (jaw/floor)
+  // This matches the oval oral cavity shape from the images
   
-  // Hard palate
+  // 1. PALATE (roof of mouth) - matches the curved roof in Image 1
   const palate = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   palate.setAttribute('class', 'palate');
   palate.setAttribute('id', 'palate');
-  palate.setAttribute('d', 'M0.9,-0.9 C0.7,-1.0 0.4,-0.95 0.1,-0.85 C-0.25,-0.75 -0.5,-0.6 -0.75,-0.4');
+  // Anatomically correct curve: steep at back (soft palate), flatter at front (hard palate)
+  palate.setAttribute('d', 'M-1.3,-0.8 Q-1.0,-1.15 -0.5,-1.2 Q0.0,-1.2 0.5,-1.15 Q0.8,-1.1 1.0,-1.0');
   palate.setAttribute('fill', 'none');
-  palate.setAttribute('stroke', '#333');
+  palate.setAttribute('stroke', '#555');
   palate.setAttribute('stroke-width', '0.03');
   svg.appendChild(palate);
   
-  // Jaw outline
+  // 2. JAW/MANDIBLE (floor of mouth) - follows the lower boundary from Image 1
   const jaw = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   jaw.setAttribute('class', 'jaw');
   jaw.setAttribute('id', 'jaw');
-  jaw.setAttribute('d', 'M0.9,-0.1 C0.7,0.0 0.5,0.05 0.3,0.07 C0.1,0.08 -0.1,0.09 -0.3,0.07 C-0.5,0.05 -0.7,0.0 -0.85,-0.1 C-0.95,-0.15 -1.05,-0.2 -1.1,-0.25');
+  // Parallel curve but lower, creating the oral cavity space
+  jaw.setAttribute('d', 'M-1.2,-0.3 Q-0.8,-0.25 -0.3,-0.2 Q0.2,-0.2 0.6,-0.25 Q0.9,-0.3 1.0,-0.4');
   jaw.setAttribute('fill', 'none');
-  jaw.setAttribute('stroke', '#333');
+  jaw.setAttribute('stroke', '#555');
   jaw.setAttribute('stroke-width', '0.03');
   svg.appendChild(jaw);
   
-  // Upper teeth
-  const upperTeeth = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  // 3. PHARYNGEAL WALL (back of throat) - connects palate to jaw at back
+  const pharynxWall = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  pharynxWall.setAttribute('class', 'pharynx');
+  // Vertical connection matching the pharyngeal cavity from Image 1
+  pharynxWall.setAttribute('d', 'M-1.3,-0.8 Q-1.35,-0.55 -1.2,-0.3');
+  pharynxWall.setAttribute('fill', 'none');
+  pharynxWall.setAttribute('stroke', '#555');
+  pharynxWall.setAttribute('stroke-width', '0.02');
+  svg.appendChild(pharynxWall);
+  
+  // 4. ALVEOLAR RIDGE (gum ridge behind teeth) - critical for tongue contact
+  const alveolarRidge = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  alveolarRidge.setAttribute('class', 'alveolar');
+  alveolarRidge.setAttribute('d', 'M0.7,-1.05 Q0.5,-1.08 0.3,-1.05');
+  alveolarRidge.setAttribute('fill', 'none');
+  alveolarRidge.setAttribute('stroke', '#777');
+  alveolarRidge.setAttribute('stroke-width', '0.015');
+  svg.appendChild(alveolarRidge);
+  
+  // 5. UPPER TEETH - positioned at front, on the palate line
+  const upperTeeth = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
   upperTeeth.setAttribute('class', 'teeth');
-  upperTeeth.setAttribute('d', 'M0.85,-0.8 L0.85,-0.7 L0.75,-0.7 L0.75,-0.8 Z');
+  upperTeeth.setAttribute('x', '0.8');
+  upperTeeth.setAttribute('y', '-1.1');
+  upperTeeth.setAttribute('width', '0.12');
+  upperTeeth.setAttribute('height', '0.08');
   upperTeeth.setAttribute('fill', 'white');
   upperTeeth.setAttribute('stroke', '#333');
-  upperTeeth.setAttribute('stroke-width', '0.01');
+  upperTeeth.setAttribute('stroke-width', '0.008');
+  upperTeeth.setAttribute('rx', '0.01');
   svg.appendChild(upperTeeth);
   
-  // Lower teeth
-  const lowerTeeth = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  // 6. LOWER TEETH - positioned at front, on the jaw line
+  const lowerTeeth = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
   lowerTeeth.setAttribute('class', 'teeth');
-  lowerTeeth.setAttribute('d', 'M0.85,-0.2 L0.85,-0.1 L0.75,-0.1 L0.75,-0.2 Z');
+  lowerTeeth.setAttribute('x', '0.8');
+  lowerTeeth.setAttribute('y', '-0.35');
+  lowerTeeth.setAttribute('width', '0.12');
+  lowerTeeth.setAttribute('height', '0.08');
   lowerTeeth.setAttribute('fill', 'white');
   lowerTeeth.setAttribute('stroke', '#333');
-  lowerTeeth.setAttribute('stroke-width', '0.01');
+  lowerTeeth.setAttribute('stroke-width', '0.008');
+  lowerTeeth.setAttribute('rx', '0.01');
   svg.appendChild(lowerTeeth);
   
-  // Labels
-  addLabel(svg, "FRONT", 0.75, 0.35);
-  addLabel(svg, "BACK", -0.75, 0.35);
+  // Labels positioned anatomically
+  addLabel(svg, "PHARYNX", -1.1, -0.1);
+  addLabel(svg, "ORAL CAVITY", 0.0, 0.1);
+  addLabel(svg, "FRONT", 0.8, 0.1);
 }
 
 function createDynamicElements(svg) {
@@ -793,45 +824,76 @@ function setupSensitivityControls() {
   }
 }
 
-function setupTestControls() {
-  const controlPanel = document.querySelector('.controls');
-  
-  if (controlPanel) {
-    const testButton = document.createElement('button');
-    testButton.textContent = 'Test Audio Patterns';
-    testButton.id = 'test-audio-patterns';
-    testButton.style.margin = '5px';
-    testButton.addEventListener('click', testAudioPatterns);
-    
-    controlPanel.appendChild(testButton);
+// VOWEL POSITION PRESETS
+const VOWEL_POSITIONS = {
+  'i': { // High front - lips slightly spread
+    ul: {x: 0.95, y: -1.05}, ll: {x: 0.95, y: -0.95}, li: {x: 0.95, y: -1.0},
+    tt: {x: 0.6, y: -1.0}, tb: {x: 0.3, y: -1.05}, td: {x: -0.4, y: -0.8}
+  },
+  'e': { // Mid front - medium opening
+    ul: {x: 0.95, y: -1.0}, ll: {x: 0.95, y: -0.8}, li: {x: 0.95, y: -0.9},
+    tt: {x: 0.5, y: -0.8}, tb: {x: 0.1, y: -0.8}, td: {x: -0.6, y: -0.7}
+  },
+  'a': { // Low central - mouth wide open
+    ul: {x: 0.95, y: -0.9}, ll: {x: 0.95, y: -0.4}, li: {x: 0.95, y: -0.65},
+    tt: {x: 0.2, y: -0.4}, tb: {x: -0.2, y: -0.35}, td: {x: -0.8, y: -0.4}
+  },
+  'u': { // High back - small rounded opening
+    ul: {x: 0.95, y: -1.0}, ll: {x: 0.95, y: -0.9}, li: {x: 0.95, y: -0.95},
+    tt: {x: 0.3, y: -0.6}, tb: {x: -0.3, y: -1.0}, td: {x: -0.9, y: -0.9}
+  },
+  'o': { // Mid back - medium rounded opening
+    ul: {x: 0.95, y: -0.95}, ll: {x: 0.95, y: -0.75}, li: {x: 0.95, y: -0.85},
+    tt: {x: 0.2, y: -0.5}, tb: {x: -0.4, y: -0.8}, td: {x: -0.9, y: -0.8}
   }
-}
+};
 
+// TESTING FUNCTION: Cycle through vowel positions (replaces testExtremePositions)
 function testExtremePositions() {
-  const extremePositions = [
-      { ul: {x: 1.5, y: -1.0}, ll: {x: 1.5, y: -0.5}, li: {x: 1.5, y: -0.75}, 
-        tt: {x: 0.8, y: -0.8}, tb: {x: 0.2, y: -0.6}, td: {x: -0.4, y: -0.5} },
-      { ul: {x: 0.2, y: -1.0}, ll: {x: 0.2, y: -0.7}, li: {x: 0.2, y: -0.85}, 
-        tt: {x: -0.2, y: -0.7}, tb: {x: -0.6, y: -0.8}, td: {x: -1.2, y: -0.7} },
-      { ul: {x: 0.9, y: -1.05}, ll: {x: 0.9, y: -0.9}, li: {x: 0.9, y: -0.95}, 
-        tt: {x: 0.8, y: -1.3}, tb: {x: 0.3, y: -0.9}, td: {x: -0.2, y: -0.7} },
-      { ul: {x: 0.9, y: -1.05}, ll: {x: 0.9, y: -0.9}, li: {x: 0.9, y: -0.95}, 
-        tt: {x: -0.2, y: -0.5}, tb: {x: -0.8, y: -0.6}, td: {x: -1.5, y: -0.4} }
+  const vowelSequence = [
+    { name: '/i/ - high front', pos: VOWEL_POSITIONS['i'] },
+    { name: '/a/ - low central', pos: VOWEL_POSITIONS['a'] },  
+    { name: '/u/ - high back', pos: VOWEL_POSITIONS['u'] },
+    { name: '/e/ - mid front', pos: VOWEL_POSITIONS['e'] },
+    { name: '/o/ - mid back', pos: VOWEL_POSITIONS['o'] }
   ];
   
-  let posIndex = 0;
+  let index = 0;
+  console.log("Testing anatomical vowel positions...");
+  updateStatus("Testing vowel positions...");
+  
   const interval = setInterval(() => {
-      if (posIndex >= extremePositions.length) {
-          clearInterval(interval);
-          initializeDefaultPositions();
-          return;
-      }
-      
-      const pos = extremePositions[posIndex];
-      updateFeatureHistory(pos, 150, -20);
-      updateCharts();
-      posIndex++;
-  }, 1000);
+    if (index >= vowelSequence.length) {
+      clearInterval(interval);
+      initializeDefaultPositions();
+      console.log("Vowel position test complete");
+      updateStatus("Ready to start.");
+      return;
+    }
+    
+    const current = vowelSequence[index];
+    console.log(`Testing ${current.name}`, current.pos);
+    updateStatus(`Demo: ${current.name}`);
+    
+    // Update with realistic pitch and loudness for each vowel
+    updateFeatureHistory(current.pos, 140 + Math.random() * 40, -20 + Math.random() * 10);
+    updateCharts();
+    
+    index++;
+  }, 2500); // 2.5 seconds per vowel for clear observation
+}
+
+// COORDINATE VERIFICATION AND DEBUGGING
+function verifyAnatomicalBounds() {
+  console.log("=== ANATOMICAL COORDINATE SYSTEM ===");
+  console.log("X-axis: -1.5 (pharynx) → +1.0 (lips)");
+  console.log("Y-axis: -1.2 (palate) → -0.2 (jaw)"); 
+  console.log("Oral cavity bounds: X[-1.2, 0.9], Y[-1.1, -0.3]");
+  console.log("Key landmarks:");
+  console.log("  Alveolar ridge: X[0.3, 0.7], Y[-1.05, -1.08]");
+  console.log("  Teeth: X[0.8, 0.92], Y[-1.1, -0.35]");
+  console.log("  Soft palate: X[-1.3, -0.8], Y[-0.8, -1.0]");
+  console.log("  Tongue space: X[-1.2, 0.8], Y[-1.05, -0.25]");
 }
 
 function testAudioPatterns() {
@@ -950,49 +1012,91 @@ function testArticulatorAnimation() {
 /******************************************************************************
 * VISUALIZATION FUNCTIONS *
 ******************************************************************************/
-
+// ANATOMICALLY CONSTRAINED TONGUE PATH
 function createTonguePath(tt, tb, td) {
-  tt = sanitizePoint(tt, 0.6, -0.7);
-  tb = sanitizePoint(tb, 0.0, -0.6);
-  td = sanitizePoint(td, -0.6, -0.5);
+  // Map articulator coordinates to anatomical space
+  // tt (tongue tip): can reach from alveolar ridge to mid-palate
+  // tb (tongue body): central oral cavity, main vowel articulator  
+  // td (tongue dorsum): back of mouth, can approach soft palate
   
-  applyAnatomicalConstraints(tt, tb, td);
+  // Sanitize inputs first
+  tt = sanitizePoint(tt, 0.4, -0.7);   // Default: mid-front, mid-height
+  tb = sanitizePoint(tb, -0.2, -0.6);  // Default: central, mid-height
+  td = sanitizePoint(td, -0.8, -0.5);  // Default: back, mid-height
   
-  const tongueRoot = { x: -1.3, y: -0.3 };
+  // Apply ANATOMICAL constraints based on the oral cavity boundaries
   
+  // Tongue tip: front of mouth, can reach alveolar ridge
+  tt.x = Math.min(Math.max(tt.x, -0.5), 0.8);   // From mid-mouth to alveolar ridge
+  tt.y = Math.min(Math.max(tt.y, -1.05), -0.3); // From alveolar ridge to jaw
+  
+  // Tongue body: central oral cavity, main vowel space (see Image 2)
+  tb.x = Math.min(Math.max(tb.x, -0.8), 0.5);   // Front-back vowel dimension
+  tb.y = Math.min(Math.max(tb.y, -1.1), -0.25); // High-low vowel dimension
+  
+  // Tongue dorsum: back of mouth, can approach soft palate  
+  td.x = Math.min(Math.max(td.x, -1.2), 0.0);   // Back region only
+  td.y = Math.min(Math.max(td.y, -1.0), -0.3);  // Can approach soft palate
+  
+  // Ensure anatomical ordering: back to front progression
+  if (td.x > tb.x - 0.1) td.x = tb.x - 0.1;
+  if (tb.x > tt.x - 0.1) tb.x = tt.x - 0.1;
+  
+  // Tongue root: attached at base of mouth, back region
+  const tongueRoot = { x: -1.15, y: -0.35 };
+  
+  // Create realistic tongue surface based on Image 1 and 2 tongue shapes
   const tonguePath = `
     M ${tongueRoot.x} ${tongueRoot.y}
-    Q ${td.x} ${td.y} ${tb.x} ${tb.y}
-    Q ${tt.x} ${tt.y} ${tt.x + 0.1} ${tt.y - 0.05}
-    Q ${tt.x + 0.05} ${tt.y + 0.1} ${tt.x - 0.05} ${tt.y + 0.15}
-    Q ${tb.x - 0.1} ${tb.y + 0.2} ${td.x - 0.1} ${td.y + 0.15}
-    Q ${tongueRoot.x + 0.2} ${tongueRoot.y + 0.1} ${tongueRoot.x} ${tongueRoot.y}
+    Q ${td.x - 0.05} ${td.y - 0.02} ${td.x} ${td.y}
+    Q ${(td.x + tb.x)/2} ${Math.min(td.y, tb.y) - 0.03} ${tb.x} ${tb.y}
+    Q ${(tb.x + tt.x)/2} ${Math.min(tb.y, tt.y) - 0.02} ${tt.x} ${tt.y}
+    L ${tt.x + 0.02} ${tt.y + 0.04}
+    Q ${tb.x + 0.02} ${tb.y + 0.06} ${td.x + 0.02} ${td.y + 0.05}
+    Q ${tongueRoot.x + 0.05} ${tongueRoot.y + 0.02} ${tongueRoot.x} ${tongueRoot.y}
     Z
   `;
   
   return tonguePath;
 }
 
+// ANATOMICALLY POSITIONED LIPS
 function createLipPaths(ul, ll, li) {
-  ul = sanitizePoint(ul, 0.9, -0.95);
-  ll = sanitizePoint(ll, 0.9, -0.7);
-  li = sanitizePoint(li, 0.85, -0.8);
+  // Ensure we have valid inputs
+  ul = sanitizePoint(ul, 0.95, -1.0);   
+  ll = sanitizePoint(ll, 0.95, -0.4);   
+  li = sanitizePoint(li, 0.95, -0.7);   
   
-  const lipCornerLeft = { x: li.x - 0.3, y: (ul.y + ll.y) / 2 };
-  const lipCornerRight = { x: li.x + 0.1, y: (ul.y + ll.y) / 2 };
+  // Force lips to be at the front of the mouth
+  ul.x = ll.x = li.x = 0.95;
   
+  // Ensure proper ordering
+  ul.y = Math.min(Math.max(ul.y, -1.1), -0.8);
+  ll.y = Math.min(Math.max(ll.y, -0.6), -0.3);
+  
+  // Force upper lip to be above lower lip
+  if (ul.y >= ll.y - 0.05) {
+    ll.y = ul.y + 0.05;
+  }
+  
+  const lipWidth = 0.06;
+  const leftX = 0.95 - lipWidth;
+  const rightX = 0.95 + lipWidth;
+  const centerX = 0.95;
+  
+  // SIMPLE UPPER LIP - horizontal oval
   const upperLipPath = `
-    M ${lipCornerLeft.x} ${lipCornerLeft.y}
-    Q ${ul.x} ${ul.y} ${lipCornerRight.x} ${lipCornerRight.y}
-    L ${lipCornerRight.x} ${(ul.y + ll.y) / 2}
-    L ${lipCornerLeft.x} ${(ul.y + ll.y) / 2}
+    M ${leftX} ${ul.y + 0.01}
+    Q ${centerX} ${ul.y - 0.015} ${rightX} ${ul.y + 0.01}
+    Q ${centerX} ${ul.y + 0.025} ${leftX} ${ul.y + 0.01}
     Z
   `;
   
+  // SIMPLE LOWER LIP - horizontal oval
   const lowerLipPath = `
-    M ${lipCornerLeft.x} ${(ul.y + ll.y) / 2}
-    L ${lipCornerRight.x} ${(ul.y + ll.y) / 2}
-    Q ${ll.x} ${ll.y} ${lipCornerLeft.x} ${lipCornerLeft.y}
+    M ${leftX} ${ll.y - 0.01}
+    Q ${centerX} ${ll.y + 0.015} ${rightX} ${ll.y - 0.01}
+    Q ${centerX} ${ll.y - 0.025} ${leftX} ${ll.y - 0.01}
     Z
   `;
   
@@ -1000,6 +1104,115 @@ function createLipPaths(ul, ll, li) {
     upperLip: upperLipPath,
     lowerLip: lowerLipPath
   };
+}
+
+// DEBUGGING FUNCTION to check lip positioning
+function debugLipPositions() {
+  console.log("=== DEBUGGING LIP POSITIONS ===");
+  
+  const testPositions = ['i', 'a', 'u'];
+  testPositions.forEach(vowel => {
+    const pos = VOWEL_POSITIONS[vowel];
+    console.log(`Vowel /${vowel}/:`);
+    console.log(`  UL: (${pos.ul.x}, ${pos.ul.y})`);
+    console.log(`  LL: (${pos.ll.x}, ${pos.ll.y})`);
+    console.log(`  LI: (${pos.li.x}, ${pos.li.y})`);
+    console.log(`  Opening: ${Math.abs(pos.ul.y - pos.ll.y).toFixed(3)}`);
+  });
+  
+  // Test current lip paths
+  const testLips = createLipPaths(
+    {x: 0.95, y: -1.0},
+    {x: 0.95, y: -0.7}, 
+    {x: 0.95, y: -0.85}
+  );
+  
+  console.log("Sample lip paths:", testLips);
+}
+
+// TEST FUNCTION: Check lip opening range
+function testLipOpening() {
+  console.log("=== TESTING LIP OPENING RANGE ===");
+  
+  // Test different mouth openings
+  const testCases = [
+    { name: "Closed (sleep)", ul: -1.0, ll: -0.95 },
+    { name: "Slightly open (rest)", ul: -1.0, ll: -0.8 },
+    { name: "Medium open (/e/)", ul: -1.0, ll: -0.7 },
+    { name: "Wide open (/a/)", ul: -0.9, ll: -0.4 }
+  ];
+  
+  testCases.forEach(test => {
+    const opening = test.ll - test.ul;
+    console.log(`${test.name}: UL=${test.ul}, LL=${test.ll}, Opening=${opening.toFixed(3)}`);
+    
+    // Test the lip path generation
+    const lipPaths = createLipPaths(
+      {x: 0.95, y: test.ul},
+      {x: 0.95, y: test.ll},
+      {x: 0.95, y: (test.ul + test.ll)/2}
+    );
+    console.log(`  Generated paths: ${lipPaths.upperLip.length + lipPaths.lowerLip.length} chars`);
+  });
+}
+
+function debugSVGElements() {
+  console.log("=== SVG ELEMENTS DEBUG ===");
+  
+  const upperLip = document.getElementById('upper-lip');
+  const lowerLip = document.getElementById('lower-lip');
+  
+  if (upperLip) {
+    console.log("Upper lip element:", upperLip);
+    console.log("Upper lip path:", upperLip.getAttribute('d'));
+    console.log("Upper lip style:", window.getComputedStyle(upperLip));
+  } else {
+    console.log("❌ Upper lip element not found!");
+  }
+  
+  if (lowerLip) {
+    console.log("Lower lip element:", lowerLip);
+    console.log("Lower lip path:", lowerLip.getAttribute('d'));
+    console.log("Lower lip style:", window.getComputedStyle(lowerLip));
+  } else {
+    console.log("❌ Lower lip element not found!");
+  }
+  
+  // Check if they're being rendered
+  const svg = document.getElementById('vocal-tract-svg');
+  if (svg) {
+    console.log("SVG viewBox:", svg.getAttribute('viewBox'));
+    console.log("All SVG children:", svg.children.length);
+    Array.from(svg.children).forEach((child, i) => {
+      console.log(`  ${i}: ${child.tagName} id="${child.id}" class="${child.className}"`);
+    });
+  }
+}
+
+// FORCE LIP RESET to fix stuck positions
+function resetLipPositions() {
+  console.log("🔧 Resetting lip positions...");
+  
+  // Force neutral lip positions
+  smoothedFeatures.ul_x = 0.95;
+  smoothedFeatures.ul_y = -1.0;
+  smoothedFeatures.ll_x = 0.95;
+  smoothedFeatures.ll_y = -0.7;
+  smoothedFeatures.li_x = 0.95;
+  smoothedFeatures.li_y = -0.85;
+  
+  // Update history
+  if (featureHistory.ul_x) {
+    featureHistory.ul_x.fill(0.95);
+    featureHistory.ul_y.fill(-1.0);
+    featureHistory.ll_x.fill(0.95);
+    featureHistory.ll_y.fill(-0.7);
+    featureHistory.li_x.fill(0.95);
+    featureHistory.li_y.fill(-0.85);
+  }
+  
+  updateCharts();
+  console.log("✅ Lip positions reset");
 }
 
 function updateSourceFeatures(pitch, loudness) {
@@ -1023,68 +1236,68 @@ function updateCharts() {
     const articulators = ['ul', 'll', 'li', 'tt', 'tb', 'td'];
     const latestFeatures = {};
 
+    // Get latest positions (these should already be constrained)
     for (const art of articulators) {
       const xKey = art + '_x';
       const yKey = art + '_y';
       
       if (featureHistory[xKey] && featureHistory[yKey]) {
-        const latestX = featureHistory[xKey][featureHistory[xKey].length - 1];
-        const latestY = featureHistory[yKey][featureHistory[yKey].length - 1];
-        
-        latestFeatures[art] = sanitizePoint(
-          { x: latestX, y: latestY }, 
-          0, -0.5
-        );
+        latestFeatures[art] = {
+          x: featureHistory[xKey][featureHistory[xKey].length - 1],
+          y: featureHistory[yKey][featureHistory[yKey].length - 1]
+        };
       } else {
         latestFeatures[art] = { x: 0, y: -0.5 };
       }
-      
+    }
+
+    // Update ALL markers to their constrained positions
+    for (const art of articulators) {
       const marker = document.getElementById(`${art}-marker`);
-      if (marker) {
+      if (marker && latestFeatures[art]) {
         marker.setAttribute('cx', latestFeatures[art].x);
         marker.setAttribute('cy', latestFeatures[art].y);
       }
     }
 
+    // Debug current positions
     if (debugCounters.chartsUpdated % 20 === 0) {
-      debugLog("Current articulator positions", {
-        tt: `(${latestFeatures.tt.x.toFixed(2)}, ${latestFeatures.tt.y.toFixed(2)})`,
-        tb: `(${latestFeatures.tb.x.toFixed(2)}, ${latestFeatures.tb.y.toFixed(2)})`,
-        td: `(${latestFeatures.td.x.toFixed(2)}, ${latestFeatures.td.y.toFixed(2)})`
+      debugLog("Lip positions", {
+        ul: `(${latestFeatures.ul.x.toFixed(2)}, ${latestFeatures.ul.y.toFixed(2)})`,
+        ll: `(${latestFeatures.ll.x.toFixed(2)}, ${latestFeatures.ll.y.toFixed(2)})`,
+        opening: `${(latestFeatures.ll.y - latestFeatures.ul.y).toFixed(3)}`
       });
     }
 
+    // Update tongue
     const tongue = document.getElementById('tongue');
     if (tongue) {
-      try {
-        const tonguePath = createTonguePath(
-          latestFeatures.tt, 
-          latestFeatures.tb, 
-          latestFeatures.td
-        );
-        tongue.setAttribute('d', tonguePath);
-      } catch (error) {
-        debugLog("Error updating tongue path", error);
-        tongue.setAttribute('d', 'M-1.3,-0.3 Q-0.6,-0.5 0,-0.6 Q0.6,-0.7 0.7,-0.65 Q0.6,-0.5 0,-0.4 Q-0.6,-0.3 -1.3,-0.3 Z');
-      }
-    }
-
-    try {
-      const lipPaths = createLipPaths(
-        latestFeatures.ul, 
-        latestFeatures.ll, 
-        latestFeatures.li
+      const tonguePath = createTonguePath(
+        latestFeatures.tt, 
+        latestFeatures.tb, 
+        latestFeatures.td
       );
-      
-      const upperLip = document.getElementById('upper-lip');
-      const lowerLip = document.getElementById('lower-lip');
-      
-      if (upperLip) upperLip.setAttribute('d', lipPaths.upperLip);
-      if (lowerLip) lowerLip.setAttribute('d', lipPaths.lowerLip);
-    } catch (error) {
-      debugLog("Error updating lip paths", error);
+      tongue.setAttribute('d', tonguePath);
     }
 
+    // Update lips
+    const lipPaths = createLipPaths(
+      latestFeatures.ul, 
+      latestFeatures.ll, 
+      latestFeatures.li
+    );
+    
+    const upperLip = document.getElementById('upper-lip');
+    const lowerLip = document.getElementById('lower-lip');
+    
+    if (upperLip) {
+      upperLip.setAttribute('d', lipPaths.upperLip);
+    }
+    if (lowerLip) {
+      lowerLip.setAttribute('d', lipPaths.lowerLip);
+    }
+
+    // Update pitch/loudness
     if (featureHistory.pitch && featureHistory.loudness) {
       const latestPitch = featureHistory.pitch[featureHistory.pitch.length - 1];
       const latestLoudness = featureHistory.loudness[featureHistory.loudness.length - 1];
@@ -1097,7 +1310,7 @@ function updateCharts() {
   }
 }
 
-// ✅ ADD: Toggle debug markers function
+// Toggle debug markers function
 function toggleDebugMarkers(show) {
   const debugMarkers = document.querySelectorAll('.debug-marker');
   debugMarkers.forEach(marker => {
@@ -1108,7 +1321,6 @@ function toggleDebugMarkers(show) {
 /******************************************************************************
 * AUDIO RECORDING & PROCESSING *
 ******************************************************************************/
-
 const audioProcessorCode = `
 class AudioProcessor extends AudioWorkletProcessor {
 constructor() {
@@ -1265,7 +1477,6 @@ function stopRecording() {
 /******************************************************************************
 * EVENT LISTENERS & INITIALIZATION *
 ******************************************************************************/
-
 document.addEventListener('DOMContentLoaded', function() {
   init().catch(error => {
     console.error("Error during initialization:", error);
