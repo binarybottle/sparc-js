@@ -1,5 +1,5 @@
 /******************************************************************************
- * SPARC Feature Extraction - Web Client
+ * SPARC Feature Extraction - Web Client (Complete with Jaw Movement)
  ******************************************************************************/
 
 /******************************************************************************
@@ -11,7 +11,6 @@ const config = {
   bufferSize: 16000,
   updateInterval: 200,
   extractPitchFn: 2,
-  maxPendingResponses: 2,
   processingTimeout: 3000
 };
 
@@ -25,19 +24,17 @@ function debugLog(message, data = null) {
   }
 }
 
-// Debug counters with error tracking
+// Debug counters
 let debugCounters = {
   audioDataReceived: 0,
   workerMessagesSent: 0,
   workerResponsesReceived: 0,
   featuresUpdated: 0,
   chartsUpdated: 0,
-  errors: 0,
-  timeouts: 0,
-  fallbacksUsed: 0
+  errors: 0
 };
 
-// Debug status display
+// Update debug status display
 function updateDebugStatus() {
   let debugDisplay = document.getElementById('debug-status');
   if (!debugDisplay) {
@@ -53,6 +50,15 @@ function updateDebugStatus() {
     `;
     document.body.appendChild(debugDisplay);
   }
+  
+  debugDisplay.innerHTML = `
+Audio: ${debugCounters.audioDataReceived}
+Worker msgs: ${debugCounters.workerMessagesSent}
+Responses: ${debugCounters.workerResponsesReceived}
+Features: ${debugCounters.featuresUpdated}
+Charts: ${debugCounters.chartsUpdated}
+Errors: ${debugCounters.errors}
+  `.trim();
 }
 
 setInterval(updateDebugStatus, 500);
@@ -68,30 +74,31 @@ let isRecording = false;
 let audioBuffer = new Float32Array(config.bufferSize);
 let audioBufferIndex = 0;
 
-// Smoothed features with validation
+// IMPROVED: Smoothed features including JAW
 let smoothedFeatures = {
   ul_x: 0.9, ul_y: -1.05,
   ll_x: 0.9, ll_y: -0.8,
   li_x: 0.85, li_y: -0.92,
   tt_x: 0.5, tt_y: -0.7,
   tb_x: 0.0, tb_y: -0.6,
-  td_x: -0.5, td_y: -0.5
+  td_x: -0.5, td_y: -0.5,
+  jaw_opening: 0.2  // NEW: Jaw opening (0 = closed, 1 = wide open)
 };
 
 let sensitivityFactor = 8.0;
 let smoothingFactor = 0.4;
 
-// Feature history
+// Feature history including jaw
 let featureHistory = {};
 
 function initializeFeatureHistory() {
   const articulators = ['ul_x', 'ul_y', 'll_x', 'll_y', 'li_x', 'li_y', 
                        'tt_x', 'tt_y', 'tb_x', 'tb_y', 'td_x', 'td_y', 
-                       'pitch', 'loudness'];
+                       'jaw_opening', 'pitch', 'loudness'];
   
   featureHistory = {};
   articulators.forEach(key => {
-    featureHistory[key] = Array(100).fill(0);
+    featureHistory[key] = Array(100).fill(key === 'jaw_opening' ? 0.2 : 0);
   });
 }
 
@@ -110,7 +117,6 @@ function updateStatus(message) {
   if (statusElement) {
     statusElement.textContent = "Status: " + message;
     
-    // Add visual indicators for errors
     if (message.includes('ERROR') || message.includes('CRITICAL')) {
       statusElement.style.backgroundColor = '#ffebee';
       statusElement.style.color = '#c62828';
@@ -155,144 +161,110 @@ function sanitizePoint(point, defaultX = 0, defaultY = 0) {
   };
 }
 
-// Apply anatomical constraints
-function applyAnatomicalConstraints(tt, tb, td) {
-  tt.x = Math.min(Math.max(tt.x, -1.5), 1.5);
-  tt.y = Math.min(Math.max(tt.y, -1.5), 0);
+// IMPROVED: Relaxed constraints - allow realistic movements
+function applyAnatomicalConstraints(features) {
+  // Allow lip protrusion for sounds like /u/
+  features.ul.x = Math.min(Math.max(features.ul.x, 0.6), 1.0);  // Relaxed from forced 0.95
+  features.ul.y = Math.min(Math.max(features.ul.y, -1.2), -0.8);
   
-  tb.x = Math.min(Math.max(tb.x, -1.5), 1.2);
-  tb.y = Math.min(Math.max(tb.y, -1.5), 0);
+  features.ll.x = Math.min(Math.max(features.ll.x, 0.6), 1.0);  // Relaxed from forced 0.95
+  features.ll.y = Math.min(Math.max(features.ll.y, -0.6), -0.2);
   
-  td.x = Math.min(Math.max(td.x, -1.5), 0.8);
-  td.y = Math.min(Math.max(td.y, -1.5), 0);
+  features.li.x = Math.min(Math.max(features.li.x, 0.6), 1.0);  // Relaxed from forced 0.95
+  features.li.y = Math.min(Math.max(features.li.y, -1.0), -0.4);
   
-  if (td.x > tb.x - 0.1) {
-    td.x = tb.x - 0.1;
-  }
-  if (tb.x > tt.x - 0.1) {
-    tb.x = tt.x - 0.1;
+  // Extended tongue ranges for better speech sound coverage
+  features.tt.x = Math.min(Math.max(features.tt.x, -0.5), 0.9);
+  features.tt.y = Math.min(Math.max(features.tt.y, -1.1), -0.25);
+  
+  features.tb.x = Math.min(Math.max(features.tb.x, -0.9), 0.6);
+  features.tb.y = Math.min(Math.max(features.tb.y, -1.15), -0.2);
+  
+  features.td.x = Math.min(Math.max(features.td.x, -1.3), 0.1);
+  features.td.y = Math.min(Math.max(features.td.y, -1.05), -0.25);
+  
+  // Ensure anatomical ordering
+  if (features.ul.y >= features.ll.y - 0.05) {
+    features.ll.y = features.ul.y + 0.05;
   }
 }
 
+// NEW: Calculate jaw opening based on lip positions
+function calculateJawOpening(ul_y, ll_y) {
+  const lipOpening = Math.abs(ll_y - ul_y);
+  // Convert lip opening to jaw opening (0 = closed, 1 = wide open)
+  const jawOpening = Math.min(Math.max((lipOpening - 0.05) / 0.5, 0), 1);
+  return jawOpening;
+}
+
 /******************************************************************************
-* ENHANCED WORKER MANAGEMENT *
+* WORKER MANAGEMENT - SIMPLIFIED *
 ******************************************************************************/
-// Initialize the ML worker with error handling
 async function initSparcWorker() {
   if (SparcWorker) return Promise.resolve();
   
   return new Promise((resolve, reject) => {
-    try {
-      debugLog("Initializing ML worker...");
-      SparcWorker = new Worker('sparc-worker.js');
+    debugLog("Initializing ML worker...");
+    SparcWorker = new Worker('sparc-worker.js');
+    
+    const initTimeout = setTimeout(() => {
+      debugLog("❌ Worker initialization timeout");
+      reject(new Error("Worker initialization timeout"));
+    }, 15000);
+    
+    SparcWorker.onmessage = function(e) {
+      const message = e.data;
       
-      const initTimeout = setTimeout(() => {
-        debugLog("❌ Worker initialization timeout - CRITICAL FAILURE");
-        reject(new Error("Worker initialization timeout - models not loading"));
-      }, 10000); // Longer timeout, but still fail hard
-      
-      SparcWorker.onmessage = function(e) {
-        const message = e.data;
-        
-        workerResponseTimeouts.forEach(timeoutId => {
-          clearTimeout(timeoutId);
-          workerResponseTimeouts.delete(timeoutId);
-        });
-        
-        debugLog(`Worker message received: ${message.type}`);
-        
-        switch(message.type) {
-          case 'initialized':
-            debugLog("✅ Worker initialization complete");
-            clearTimeout(initTimeout);
-            workerInitialized = true;
-            resolve();
-            break;
-          
-          case 'debug':
-            console.log('WORKER:', message.message);
-            break;
-            
-          case 'features':
-            handleWorkerFeatures(message);
-            break;
-            
-          case 'status':
-            updateStatus(message.message);
-            break;
-            
-          case 'error':
-          case 'timeout':
-            clearTimeout(initTimeout);
-            debugLog("❌ Worker error during initialization", message);
-            reject(new Error(`Worker error: ${message.error || 'Unknown error'}`));
-            break;
-        }
-      };
-      
-      SparcWorker.onerror = function(error) {
-        clearTimeout(initTimeout);
-        debugLog("❌ Worker error event", error);
-        reject(new Error(`Worker creation failed: ${error.message}`));
-      };
-      
-      SparcWorker.postMessage({
-        type: 'init',
-        onnxPath: 'models/wavlm_base_layer9_quantized.onnx',
-        linearModelPath: 'models/wavlm_linear_model.json'
+      workerResponseTimeouts.forEach(timeoutId => {
+        clearTimeout(timeoutId);
+        workerResponseTimeouts.delete(timeoutId);
       });
       
-    } catch (error) {
-      debugLog("❌ Error creating worker", error);
+      debugLog(`Worker message received: ${message.type}`);
+      
+      switch(message.type) {
+        case 'initialized':
+          debugLog("✅ Worker initialization complete");
+          clearTimeout(initTimeout);
+          workerInitialized = true;
+          resolve();
+          break;
+        
+        case 'debug':
+          console.log('WORKER:', message.message);
+          break;
+          
+        case 'features':
+          handleWorkerFeatures(message);
+          break;
+          
+        case 'status':
+          updateStatus(message.message);
+          break;
+          
+        case 'error':
+          clearTimeout(initTimeout);
+          debugLog("❌ Worker error", message);
+          reject(new Error(`Worker error: ${message.error || 'Unknown error'}`));
+          break;
+      }
+    };
+    
+    SparcWorker.onerror = function(error) {
+      clearTimeout(initTimeout);
+      debugLog("❌ Worker error event", error);
       reject(new Error(`Worker creation failed: ${error.message}`));
-    }
+    };
+    
+    SparcWorker.postMessage({
+      type: 'init',
+      onnxPath: 'models/wavlm_base_layer9_quantized.onnx',
+      linearModelPath: 'models/wavlm_linear_model.json'
+    });
   });
 }
 
-// Main thread fallback function
-async function initSparcWithFallback() {
-  try {
-      // Try worker initialization first
-      await initSparcWorker();
-  } catch (error) {
-      console.warn('Worker failed, switching to main thread processing:', error);
-      
-      // Check if ONNX Runtime is available in main thread
-      if (typeof ort === 'undefined') {
-          throw new Error('ONNX Runtime not available in main thread either');
-      }
-      
-      console.log('Using main thread ONNX Runtime, version:', ort.version);
-      
-      // Configure main thread ONNX Runtime
-      ort.env.wasm.numThreads = 1;
-      ort.env.wasm.simd = true;
-      ort.env.debug = false;
-      
-      // Load models in main thread
-      await loadModelsInMainThread();
-      
-      updateStatus("Running in main thread mode (worker fallback)");
-  }
-}
-
-async function loadModelsInMainThread() {
-    try {
-        const session = await ort.InferenceSession.create('models/wavlm_base_layer9_quantized.onnx');
-        console.log('ONNX model loaded successfully in main thread');
-        
-        const response = await fetch('models/wavlm_linear_model.json');
-        const linearModel = await response.json();
-        console.log('Linear model loaded successfully in main thread');
-        
-        return { session, linearModel };
-    } catch (error) {
-        console.error('Failed to load models in main thread:', error);
-        throw error;
-    }
-}
-
-// Handle worker feature responses with validation
+// SIMPLIFIED: Handle worker feature responses without fallbacks
 function handleWorkerFeatures(message) {
   pendingWorkerResponses = Math.max(0, pendingWorkerResponses - 1);
   debugCounters.workerResponsesReceived++;
@@ -324,45 +296,21 @@ function handleWorkerFeatures(message) {
   } catch (error) {
     debugLog("Error processing worker features", error);
     debugCounters.errors++;
-    
-    const fallbackFeatures = generateLocalFallbackFeatures();
-    updateFeatureHistory(fallbackFeatures, 120, -25);
-    updateCharts();
-    debugCounters.fallbacksUsed++;
-  }
-}
-
-// Handle worker errors with recovery
-function handleWorkerError(message) {
-  debugLog("❌ Worker error - REAL PROBLEM!", message);
-  debugCounters.errors++;
-  
-  if (message.type === 'timeout') {
-    debugCounters.timeouts++;
-  }
-  
-  pendingWorkerResponses = Math.max(0, pendingWorkerResponses - 1);
-  
-  updateStatus(`ERROR: Worker error: ${message.error || 'Unknown error'}`);
-  
-  if (!workerInitialized) {
-    updateStatus("CRITICAL: Worker initialization failed: " + (message.error || 'Unknown error'));
+    // NO FALLBACK - just log the error
   }
 }
 
 /******************************************************************************
-* FEATURE EXTRACTION LOOP *
+* FEATURE EXTRACTION LOOP - SIMPLIFIED *
 ******************************************************************************/
 async function extractFeaturesLoop() {
-  if (!isRecording) {
-    return;
-  }
+  if (!isRecording) return;
   
   setTimeout(extractFeaturesLoop, config.updateInterval);
   
   if (!workerInitialized) {
-    debugLog("❌ Worker not initialized - stopping extraction");
-    updateStatus("ERROR: ML models not loaded. Please wait for initialization or refresh.");
+    debugLog("❌ Worker not initialized");
+    updateStatus("ERROR: ML models not loaded");
     return;
   }
   
@@ -380,12 +328,10 @@ async function extractFeaturesLoop() {
     
     const timeoutId = setTimeout(() => {
       if (workerResponseTimeouts.has(timeoutId)) {
-        debugLog("❌ Worker response timeout (1s) - REAL PROBLEM!");
-        debugCounters.timeouts++;
+        debugLog("❌ Worker response timeout (1s)");
         pendingWorkerResponses = Math.max(0, pendingWorkerResponses - 1);
         workerResponseTimeouts.delete(timeoutId);
-        
-        updateStatus("ERROR: ML processing timeout. Check worker performance.");
+        updateStatus("ERROR: ML processing timeout");
       }
     }, 1000);
     
@@ -402,14 +348,13 @@ async function extractFeaturesLoop() {
     debugCounters.workerMessagesSent++;
     
   } catch (error) {
-    debugLog("❌ Feature extraction error - REAL PROBLEM!", error);
+    debugLog("❌ Feature extraction error", error);
     debugCounters.errors++;
     updateStatus(`ERROR: Feature extraction failed: ${error.message}`);
-    // ❌ REMOVED: Fallback on error
   }
 }
 
-// Feature history update with validation
+// IMPROVED: Feature history update with jaw movement
 function updateFeatureHistory(articulationFeatures, pitch, loudness) {
   try {
     if (!articulationFeatures || typeof pitch !== 'number' || typeof loudness !== 'number') {
@@ -419,6 +364,10 @@ function updateFeatureHistory(articulationFeatures, pitch, loudness) {
     const alpha = isRecording ? smoothingFactor : 0.3;
     const articulators = ['ul', 'll', 'li', 'tt', 'tb', 'td'];
     
+    // Apply constraints to incoming features
+    applyAnatomicalConstraints(articulationFeatures);
+    
+    // Update articulator positions
     for (const art of articulators) {
       if (articulationFeatures[art]) {
         let newX = articulationFeatures[art].x;
@@ -429,32 +378,6 @@ function updateFeatureHistory(articulationFeatures, pitch, loudness) {
           continue;
         }
         
-        if (art === 'ul') {
-          // Allow lip protrusion for /u/ sounds
-          newX = Math.min(Math.max(newX, 0.7), 1.0); // Allow lips to move forward/back
-          newY = Math.min(Math.max(newY, -1.1), -0.8);
-        } else if (art === 'll') {
-          // Allow lip protrusion
-          newX = Math.min(Math.max(newX, 0.7), 1.0); // Allow lips to move forward/back
-          newY = Math.min(Math.max(newY, -0.6), -0.3);
-        } else if (art === 'li') {
-          // Allow lip interface movement
-          newX = Math.min(Math.max(newX, 0.7), 1.0); // Allow lips to move forward/back
-          newY = Math.min(Math.max(newY, -1.0), -0.4);
-        } else if (art === 'tt') {
-          // Allow tongue tip to reach teeth/alveolar ridge
-          newX = Math.min(Math.max(newX, -0.5), 0.9); // Extended from 0.8 to 0.9
-          newY = Math.min(Math.max(newY, -1.1), -0.25); // Extended range
-        } else if (art === 'tb') {
-          // Vowel space coverage
-          newX = Math.min(Math.max(newX, -0.9), 0.6); // Extended range
-          newY = Math.min(Math.max(newY, -1.15), -0.2); // Extended range
-        } else if (art === 'td') {
-          // Allow tongue dorsum to reach soft palate
-          newX = Math.min(Math.max(newX, -1.3), 0.1); // Extended back range
-          newY = Math.min(Math.max(newY, -1.05), -0.25); // Extended range
-        }
-        
         const oldX = smoothedFeatures[art + '_x'];
         const oldY = smoothedFeatures[art + '_y'];
         
@@ -463,10 +386,9 @@ function updateFeatureHistory(articulationFeatures, pitch, loudness) {
       }
     }
     
-    // Ensure lip ordering but don't over-constrain
-    if (smoothedFeatures.ul_y >= smoothedFeatures.ll_y - 0.05) {
-      smoothedFeatures.ll_y = smoothedFeatures.ul_y + 0.05;
-    }
+    // NEW: Calculate and update jaw opening
+    const jawOpening = calculateJawOpening(smoothedFeatures.ul_y, smoothedFeatures.ll_y);
+    smoothedFeatures.jaw_opening = alpha * jawOpening + (1 - alpha) * smoothedFeatures.jaw_opening;
     
     // Log constraint application for debugging
     if (debugCounters.featuresUpdated % 50 === 0) {
@@ -474,7 +396,8 @@ function updateFeatureHistory(articulationFeatures, pitch, loudness) {
         ul_x: smoothedFeatures.ul_x.toFixed(3),
         ll_x: smoothedFeatures.ll_x.toFixed(3),
         tt_x: smoothedFeatures.tt_x.toFixed(3),
-        td_x: smoothedFeatures.td_x.toFixed(3)
+        td_x: smoothedFeatures.td_x.toFixed(3),
+        jaw_opening: smoothedFeatures.jaw_opening.toFixed(3)
       });
     }
     
@@ -487,6 +410,8 @@ function updateFeatureHistory(articulationFeatures, pitch, loudness) {
         featureHistory[key].push(isNaN(pitch) ? 0 : pitch);
       } else if (key === 'loudness') {
         featureHistory[key].push(isNaN(loudness) ? -60 : loudness);
+      } else if (key === 'jaw_opening') {
+        featureHistory[key].push(smoothedFeatures.jaw_opening);
       } else {
         const value = smoothedFeatures[key];
         featureHistory[key].push(isNaN(value) ? 0 : value);
@@ -504,12 +429,12 @@ function updateFeatureHistory(articulationFeatures, pitch, loudness) {
 ******************************************************************************/
 function initializeDefaultPositions() {
   const defaultPositions = {
-    ul: { x: 0.95, y: -1.0 },   // Upper lip at front, high
-    ll: { x: 0.95, y: -0.7 },   // Lower lip at front, lower  
-    li: { x: 0.95, y: -0.85 },  // Lip interface at center
-    tt: { x: 0.6, y: -0.7 },    // Tongue tip
-    tb: { x: 0.0, y: -0.6 },    // Tongue body
-    td: { x: -0.6, y: -0.5 }    // Tongue dorsum
+    ul: { x: 0.9, y: -1.0 },
+    ll: { x: 0.9, y: -0.7 },
+    li: { x: 0.9, y: -0.85 },
+    tt: { x: 0.6, y: -0.7 },
+    tb: { x: 0.0, y: -0.6 },
+    td: { x: -0.6, y: -0.5 }
   };
   
   Object.keys(defaultPositions).forEach(art => {
@@ -517,8 +442,14 @@ function initializeDefaultPositions() {
     smoothedFeatures[art + '_y'] = defaultPositions[art].y;
   });
   
+  // Set default jaw opening
+  smoothedFeatures.jaw_opening = calculateJawOpening(
+    defaultPositions.ul.y, 
+    defaultPositions.ll.y
+  );
+  
   if (featureHistory && Object.keys(featureHistory).length > 0) {
-    for (let i = 0; i < featureHistory.ul_x.length; i++) {
+    for (let i = 0; i < 100; i++) {
       Object.keys(defaultPositions).forEach(art => {
         const xKey = art + '_x';
         const yKey = art + '_y';
@@ -527,6 +458,9 @@ function initializeDefaultPositions() {
           featureHistory[yKey][i] = defaultPositions[art].y;
         }
       });
+      if (featureHistory.jaw_opening) {
+        featureHistory.jaw_opening[i] = smoothedFeatures.jaw_opening;
+      }
     }
     updateCharts();
   }
@@ -534,24 +468,31 @@ function initializeDefaultPositions() {
   debugLog("Default positions initialized", defaultPositions);
 }
 
-// Initialize application with fallback
+// SIMPLIFIED: Initialize application without fallbacks
 async function init() {
   try {
     updateStatus("Loading models...");
     
     initializeFeatureHistory();
-    
     await initSparcWorker(); // This MUST succeed or app fails
     
     setupCharts();
     setupSensitivityControls();
     initializeDefaultPositions();
     
-    document.getElementById('startButton').disabled = false;
-    updateStatus("✅ Models loaded successfully. Ready to start.");
+    const startButton = document.getElementById('startButton');
+    const stopButton = document.getElementById('stopButton');
     
-    document.getElementById('startButton').addEventListener('click', startRecording);
-    document.getElementById('stopButton').addEventListener('click', stopRecording);
+    if (startButton) {
+      startButton.disabled = false;
+      startButton.addEventListener('click', startRecording);
+    }
+    
+    if (stopButton) {
+      stopButton.addEventListener('click', stopRecording);
+    }
+    
+    updateStatus("✅ Models loaded successfully. Ready to start.");
     
     const debugMode = document.getElementById('debug-mode');
     if (debugMode) {
@@ -562,22 +503,27 @@ async function init() {
       toggleDebugMarkers(true);
     }
 
-    // Only show test animation if models actually loaded
     if (!isRecording) {
       testArticulatorAnimation();
     }
 
   } catch (error) {
-    // ❌ HARD FAILURE instead of graceful degradation
+    // HARD FAILURE - no fallbacks
     updateStatus(`CRITICAL ERROR: ${error.message}`);
     debugLog("❌ Model loading failed - app cannot function", error);
     debugCounters.errors++;
     
-    // Disable the app
-    document.getElementById('startButton').disabled = true;
-    document.getElementById('testButton').disabled = true;
+    const startButton = document.getElementById('startButton');
+    if (startButton) {
+      startButton.disabled = true;
+    }
     
-    // Show clear error message
+    // Only disable test button if it exists
+    const testButton = document.getElementById('testButton');
+    if (testButton) {
+      testButton.disabled = true;
+    }
+    
     const errorMsg = document.createElement('div');
     errorMsg.style.cssText = `
       position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
@@ -588,13 +534,6 @@ async function init() {
     errorMsg.innerHTML = `
       <h3>🚨 SPARC Initialization Failed</h3>
       <p>The ML models could not be loaded.</p>
-      <p><strong>Possible causes:</strong></p>
-      <ul style="text-align: left; margin: 10px 0;">
-        <li>Missing model files in /models/ directory</li>
-        <li>Network connectivity issues</li>
-        <li>Browser compatibility problems</li>
-        <li>ONNX Runtime not working</li>
-      </ul>
       <p><strong>Error:</strong> ${error.message}</p>
       <button onclick="this.parentElement.remove()" style="padding: 10px 20px; margin-top: 10px;">Close</button>
     `;
@@ -603,9 +542,8 @@ async function init() {
 }
 
 /******************************************************************************
-* SETUP FUNCTIONS *
+* VISUALIZATION FUNCTIONS WITH JAW MOVEMENT *
 ******************************************************************************/
-
 function setupVocalTractVisualization() {
   const svg = document.getElementById('vocal-tract-svg');
   
@@ -619,7 +557,7 @@ function setupVocalTractVisualization() {
   svg.setAttribute('height', '400');
   
   while (svg.firstChild) {
-      svg.removeChild(svg.firstChild);
+    svg.removeChild(svg.firstChild);
   }
   
   createStaticElements(svg);
@@ -628,46 +566,27 @@ function setupVocalTractVisualization() {
   debugLog("SVG visualization setup complete");
 }
 
-// ANATOMICALLY ACCURATE VOCAL TRACT MAPPING
 function createStaticElements(svg) {
-  // COORDINATE SYSTEM based on anatomical images:
-  // X: -1.5 (back of pharynx) to +1.0 (front of lips)  
-  // Y: -1.2 (palate/roof) to -0.2 (jaw/floor)
-  // This matches the oval oral cavity shape from the images
-  
-  // 1. PALATE (roof of mouth) - matches the curved roof in Image 1
+  // PALATE (roof of mouth) - static
   const palate = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   palate.setAttribute('class', 'palate');
   palate.setAttribute('id', 'palate');
-  // Anatomically correct curve: steep at back (soft palate), flatter at front (hard palate)
   palate.setAttribute('d', 'M-1.3,-0.8 Q-1.0,-1.15 -0.5,-1.2 Q0.0,-1.2 0.5,-1.15 Q0.8,-1.1 1.0,-1.0');
   palate.setAttribute('fill', 'none');
   palate.setAttribute('stroke', '#555');
   palate.setAttribute('stroke-width', '0.03');
   svg.appendChild(palate);
   
-  // 2. JAW/MANDIBLE (floor of mouth) - follows the lower boundary from Image 1
-  const jaw = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-  jaw.setAttribute('class', 'jaw');
-  jaw.setAttribute('id', 'jaw');
-  // Parallel curve but lower, creating the oral cavity space
-  jaw.setAttribute('d', 'M-1.2,-0.3 Q-0.8,-0.25 -0.3,-0.2 Q0.2,-0.2 0.6,-0.25 Q0.9,-0.3 1.0,-0.4');
-  jaw.setAttribute('fill', 'none');
-  jaw.setAttribute('stroke', '#555');
-  jaw.setAttribute('stroke-width', '0.03');
-  svg.appendChild(jaw);
-  
-  // 3. PHARYNGEAL WALL (back of throat) - connects palate to jaw at back
+  // PHARYNGEAL WALL
   const pharynxWall = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   pharynxWall.setAttribute('class', 'pharynx');
-  // Vertical connection matching the pharyngeal cavity from Image 1
   pharynxWall.setAttribute('d', 'M-1.3,-0.8 Q-1.35,-0.55 -1.2,-0.3');
   pharynxWall.setAttribute('fill', 'none');
   pharynxWall.setAttribute('stroke', '#555');
   pharynxWall.setAttribute('stroke-width', '0.02');
   svg.appendChild(pharynxWall);
   
-  // 4. ALVEOLAR RIDGE (gum ridge behind teeth) - critical for tongue contact
+  // ALVEOLAR RIDGE
   const alveolarRidge = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   alveolarRidge.setAttribute('class', 'alveolar');
   alveolarRidge.setAttribute('d', 'M0.7,-1.05 Q0.5,-1.08 0.3,-1.05');
@@ -676,9 +595,10 @@ function createStaticElements(svg) {
   alveolarRidge.setAttribute('stroke-width', '0.015');
   svg.appendChild(alveolarRidge);
   
-  // 5. UPPER TEETH - positioned at front, on the palate line
+  // UPPER TEETH - fixed to palate
   const upperTeeth = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
   upperTeeth.setAttribute('class', 'teeth');
+  upperTeeth.setAttribute('id', 'upper-teeth');
   upperTeeth.setAttribute('x', '0.8');
   upperTeeth.setAttribute('y', '-1.1');
   upperTeeth.setAttribute('width', '0.12');
@@ -689,11 +609,26 @@ function createStaticElements(svg) {
   upperTeeth.setAttribute('rx', '0.01');
   svg.appendChild(upperTeeth);
   
-  // 6. LOWER TEETH - positioned at front, on the jaw line
+  // Labels
+  addLabel(svg, "PHARYNX", -1.1, -0.1);
+  addLabel(svg, "ORAL CAVITY", 0.0, 0.1);
+  addLabel(svg, "FRONT", 0.8, 0.1);
+}
+
+function createDynamicElements(svg) {
+  // JAW - NEW: Dynamic jaw that moves with mouth opening
+  const jaw = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  jaw.setAttribute('class', 'jaw');
+  jaw.setAttribute('id', 'jaw');
+  jaw.setAttribute('fill', 'none');
+  jaw.setAttribute('stroke', '#333');
+  jaw.setAttribute('stroke-width', '0.03');
+  svg.appendChild(jaw);
+  
+  // LOWER TEETH - NEW: Attached to jaw, moves with jaw
   const lowerTeeth = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
   lowerTeeth.setAttribute('class', 'teeth');
-  lowerTeeth.setAttribute('x', '0.8');
-  lowerTeeth.setAttribute('y', '-0.35');
+  lowerTeeth.setAttribute('id', 'lower-teeth');
   lowerTeeth.setAttribute('width', '0.12');
   lowerTeeth.setAttribute('height', '0.08');
   lowerTeeth.setAttribute('fill', 'white');
@@ -702,13 +637,6 @@ function createStaticElements(svg) {
   lowerTeeth.setAttribute('rx', '0.01');
   svg.appendChild(lowerTeeth);
   
-  // Labels positioned anatomically
-  addLabel(svg, "PHARYNX", -1.1, -0.1);
-  addLabel(svg, "ORAL CAVITY", 0.0, 0.1);
-  addLabel(svg, "FRONT", 0.8, 0.1);
-}
-
-function createDynamicElements(svg) {
   // Upper lip
   const upperLip = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   upperLip.setAttribute('class', 'lips');
@@ -741,16 +669,37 @@ function createDynamicElements(svg) {
   const colors = ['#e74c3c', '#3498db', '#f1c40f', '#2ecc71', '#9b59b6', '#e67e22'];
   
   articulators.forEach((art, i) => {
-      const marker = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-      marker.setAttribute('id', `${art}-marker`);
-      marker.setAttribute('r', '0.03');
-      marker.setAttribute('fill', colors[i]);
-      marker.setAttribute('stroke', '#fff');
-      marker.setAttribute('stroke-width', '0.005');
-      marker.setAttribute('class', 'debug-marker');
-      marker.style.display = 'none';
-      svg.appendChild(marker);
+    const marker = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    marker.setAttribute('id', `${art}-marker`);
+    marker.setAttribute('r', '0.03');
+    marker.setAttribute('fill', colors[i]);
+    marker.setAttribute('stroke', '#fff');
+    marker.setAttribute('stroke-width', '0.005');
+    marker.setAttribute('class', 'debug-marker');
+    marker.style.display = 'none';
+    svg.appendChild(marker);
   });
+}
+
+// NEW: Create dynamic jaw path based on opening
+function createJawPath(jawOpening) {
+  // Base jaw position
+  const baseY = -0.3;
+  // FIXED: Lower jaw drops as mouth opens (moves to more positive Y)
+  const jawY = baseY + (jawOpening * 0.4);  // Increased range for visibility
+  
+  return `M-1.2,${jawY} Q-0.8,${jawY + 0.05} -0.3,${jawY} Q0.2,${jawY} 0.6,${jawY + 0.05} Q0.9,${jawY} 1.0,${jawY + 0.1}`;
+}
+
+// NEW: Position lower teeth with jaw
+function positionLowerTeeth(jawOpening) {
+  const baseY = -0.35;
+  // FIXED: Teeth move down with jaw opening
+  const teethY = baseY + (jawOpening * 0.4);  // Increased range to match jaw
+  return {
+    x: 0.8,
+    y: teethY
+  };
 }
 
 function addLabel(svg, text, x, y) {
@@ -764,18 +713,64 @@ function addLabel(svg, text, x, y) {
   svg.appendChild(label);
 }
 
+// IMPROVED: Create tongue path
+function createTonguePath(tt, tb, td) {
+  tt = sanitizePoint(tt, 0.4, -0.7);
+  tb = sanitizePoint(tb, -0.2, -0.6);
+  td = sanitizePoint(td, -0.8, -0.5);
+  
+  const tongueRoot = { x: -1.15, y: -0.35 };
+  
+  const tonguePath = `
+    M ${tongueRoot.x} ${tongueRoot.y}
+    Q ${td.x - 0.05} ${td.y - 0.02} ${td.x} ${td.y}
+    Q ${(td.x + tb.x)/2} ${Math.min(td.y, tb.y) - 0.03} ${tb.x} ${tb.y}
+    Q ${(tb.x + tt.x)/2} ${Math.min(tb.y, tt.y) - 0.02} ${tt.x} ${tt.y}
+    L ${tt.x + 0.02} ${tt.y + 0.04}
+    Q ${tb.x + 0.02} ${tb.y + 0.06} ${td.x + 0.02} ${td.y + 0.05}
+    Q ${tongueRoot.x + 0.05} ${tongueRoot.y + 0.02} ${tongueRoot.x} ${tongueRoot.y}
+    Z
+  `;
+  
+  return tonguePath;
+}
+
+// IMPROVED: Create lip paths with realistic movement
+function createLipPaths(ul, ll, li) {
+  ul = sanitizePoint(ul, 0.9, -1.0);   
+  ll = sanitizePoint(ll, 0.9, -0.7);   
+  li = sanitizePoint(li, 0.9, -0.85);   
+  
+  // Allow lip movement (no longer forced to x=0.95)
+  const lipWidth = 0.06;
+  const leftX = ul.x - lipWidth;
+  const rightX = ul.x + lipWidth;
+  const centerX = ul.x;
+  
+  const upperLipPath = `
+    M ${leftX} ${ul.y + 0.01}
+    Q ${centerX} ${ul.y - 0.015} ${rightX} ${ul.y + 0.01}
+    Q ${centerX} ${ul.y + 0.025} ${leftX} ${ul.y + 0.01}
+    Z
+  `;
+  
+  const lowerLipPath = `
+    M ${leftX} ${ll.y - 0.01}
+    Q ${centerX} ${ll.y + 0.015} ${rightX} ${ll.y - 0.01}
+    Q ${centerX} ${ll.y - 0.025} ${leftX} ${ll.y - 0.01}
+    Z
+  `;
+  
+  return {
+    upperLip: upperLipPath,
+    lowerLip: lowerLipPath
+  };
+}
+
 function setupCharts() {
   setupVocalTractVisualization();
-  
-  debugLog("Charts setup complete", {
-    tongueExists: !!document.getElementById('tongue'),
-    upperLipExists: !!document.getElementById('upper-lip'),
-    lowerLipExists: !!document.getElementById('lower-lip'),
-    debugMarkerCount: document.querySelectorAll('.debug-marker').length
-  });
-
+  debugLog("Charts setup complete");
   initializeDefaultPositions();
-
   if (!isRecording) {
     testArticulatorAnimation();
   }
@@ -786,69 +781,73 @@ function setupSensitivityControls() {
   const sensitivityValue = document.getElementById('sensitivity-value');
   
   if (sensitivitySlider) {
-      sensitivitySlider.addEventListener('input', function() {
-          sensitivityFactor = parseFloat(this.value);
-          sensitivityValue.textContent = sensitivityFactor.toFixed(1);
-          debugLog(`Sensitivity changed to: ${sensitivityFactor}`);
-      });
+    sensitivitySlider.addEventListener('input', function() {
+      sensitivityFactor = parseFloat(this.value);
+      sensitivityValue.textContent = sensitivityFactor.toFixed(1);
+      debugLog(`Sensitivity changed to: ${sensitivityFactor}`);
+    });
   }
   
   const smoothingSlider = document.getElementById('smoothing-slider');
   const smoothingValue = document.getElementById('smoothing-value');
   
   if (smoothingSlider) {
-      smoothingSlider.addEventListener('input', function() {
-          smoothingFactor = parseFloat(this.value);
-          smoothingValue.textContent = smoothingFactor.toFixed(1);
-          debugLog(`Smoothing changed to: ${smoothingFactor}`);
-      });
+    smoothingSlider.addEventListener('input', function() {
+      smoothingFactor = parseFloat(this.value);
+      smoothingValue.textContent = smoothingFactor.toFixed(1);
+      debugLog(`Smoothing changed to: ${smoothingFactor}`);
+    });
   }
   
   const resetButton = document.getElementById('reset-positions');
   if (resetButton) {
-      resetButton.addEventListener('click', function() {
-          initializeDefaultPositions();
-          debugLog("Positions reset to neutral");
-      });
+    resetButton.addEventListener('click', function() {
+      initializeDefaultPositions();
+      debugLog("Positions reset to neutral");
+    });
   }
   
   const testButton = document.getElementById('test-extremes');
   if (testButton) {
-      testButton.addEventListener('click', function() {
-          if (!isRecording) {
-              testExtremePositions();
-          } else {
-              alert("Stop recording first to test extreme positions");
-          }
-      });
+    testButton.addEventListener('click', function() {
+      if (!isRecording) {
+        testExtremePositions();
+      } else {
+        alert("Stop recording first to test extreme positions");
+      }
+    });
   }
 }
 
-// VOWEL POSITION PRESETS
+// VOWEL POSITION PRESETS WITH JAW OPENING (Updated for dramatic movement)
 const VOWEL_POSITIONS = {
-  'i': { // High front - lips slightly spread
-    ul: {x: 0.95, y: -1.05}, ll: {x: 0.95, y: -0.95}, li: {x: 0.95, y: -1.0},
-    tt: {x: 0.6, y: -1.0}, tb: {x: 0.3, y: -1.05}, td: {x: -0.4, y: -0.8}
+  'i': { // High front - very small jaw opening
+    ul: {x: 0.9, y: -1.05}, ll: {x: 0.9, y: -1.0}, li: {x: 0.9, y: -1.025},
+    tt: {x: 0.6, y: -1.0}, tb: {x: 0.3, y: -1.05}, td: {x: -0.4, y: -0.8},
+    jaw_opening: 0.0  // Nearly closed
   },
-  'e': { // Mid front - medium opening
-    ul: {x: 0.95, y: -1.0}, ll: {x: 0.95, y: -0.8}, li: {x: 0.95, y: -0.9},
-    tt: {x: 0.5, y: -0.8}, tb: {x: 0.1, y: -0.8}, td: {x: -0.6, y: -0.7}
+  'e': { // Mid front - medium jaw opening
+    ul: {x: 0.9, y: -1.0}, ll: {x: 0.9, y: -0.75}, li: {x: 0.9, y: -0.875},
+    tt: {x: 0.5, y: -0.8}, tb: {x: 0.1, y: -0.8}, td: {x: -0.6, y: -0.7},
+    jaw_opening: 0.4  // Medium opening
   },
-  'a': { // Low central - mouth wide open
-    ul: {x: 0.95, y: -0.9}, ll: {x: 0.95, y: -0.4}, li: {x: 0.95, y: -0.65},
-    tt: {x: 0.2, y: -0.4}, tb: {x: -0.2, y: -0.35}, td: {x: -0.8, y: -0.4}
+  'a': { // Low central - very large jaw opening
+    ul: {x: 0.9, y: -0.95}, ll: {x: 0.9, y: -0.3}, li: {x: 0.9, y: -0.625},
+    tt: {x: 0.2, y: -0.4}, tb: {x: -0.2, y: -0.35}, td: {x: -0.8, y: -0.4},
+    jaw_opening: 1.0  // Wide open
   },
-  'u': { // High back - small rounded opening
-    ul: {x: 0.95, y: -1.0}, ll: {x: 0.95, y: -0.9}, li: {x: 0.95, y: -0.95},
-    tt: {x: 0.3, y: -0.6}, tb: {x: -0.3, y: -1.0}, td: {x: -0.9, y: -0.9}
+  'u': { // High back - small jaw opening, lip protrusion
+    ul: {x: 0.7, y: -1.0}, ll: {x: 0.7, y: -0.92}, li: {x: 0.7, y: -0.96},
+    tt: {x: 0.3, y: -0.6}, tb: {x: -0.3, y: -1.0}, td: {x: -0.9, y: -0.9},
+    jaw_opening: 0.1  // Nearly closed
   },
-  'o': { // Mid back - medium rounded opening
-    ul: {x: 0.95, y: -0.95}, ll: {x: 0.95, y: -0.75}, li: {x: 0.95, y: -0.85},
-    tt: {x: 0.2, y: -0.5}, tb: {x: -0.4, y: -0.8}, td: {x: -0.9, y: -0.8}
+  'o': { // Mid back - medium jaw opening, slight lip protrusion
+    ul: {x: 0.8, y: -0.95}, ll: {x: 0.8, y: -0.7}, li: {x: 0.8, y: -0.825},
+    tt: {x: 0.2, y: -0.5}, tb: {x: -0.4, y: -0.8}, td: {x: -0.9, y: -0.8},
+    jaw_opening: 0.4  // Medium opening
   }
 };
 
-// TESTING FUNCTION: Cycle through vowel positions (replaces testExtremePositions)
 function testExtremePositions() {
   const vowelSequence = [
     { name: '/i/ - high front', pos: VOWEL_POSITIONS['i'] },
@@ -859,7 +858,7 @@ function testExtremePositions() {
   ];
   
   let index = 0;
-  console.log("Testing anatomical vowel positions...");
+  console.log("Testing anatomical vowel positions with jaw movement...");
   updateStatus("Testing vowel positions...");
   
   const interval = setInterval(() => {
@@ -875,65 +874,22 @@ function testExtremePositions() {
     console.log(`Testing ${current.name}`, current.pos);
     updateStatus(`Demo: ${current.name}`);
     
-    // Update with realistic pitch and loudness for each vowel
-    updateFeatureHistory(current.pos, 140 + Math.random() * 40, -20 + Math.random() * 10);
+    // Extract articulator positions (exclude jaw_opening from articulationFeatures)
+    const articulationFeatures = {};
+    Object.keys(current.pos).forEach(key => {
+      if (key !== 'jaw_opening') {
+        articulationFeatures[key] = current.pos[key];
+      }
+    });
+    
+    // Set jaw opening directly
+    smoothedFeatures.jaw_opening = current.pos.jaw_opening;
+    
+    updateFeatureHistory(articulationFeatures, 140 + Math.random() * 40, -20 + Math.random() * 10);
     updateCharts();
     
     index++;
-  }, 2500); // 2.5 seconds per vowel for clear observation
-}
-
-// COORDINATE VERIFICATION AND DEBUGGING
-function verifyAnatomicalBounds() {
-  console.log("=== ANATOMICAL COORDINATE SYSTEM ===");
-  console.log("X-axis: -1.5 (pharynx) → +1.0 (lips)");
-  console.log("Y-axis: -1.2 (palate) → -0.2 (jaw)"); 
-  console.log("Oral cavity bounds: X[-1.2, 0.9], Y[-1.1, -0.3]");
-  console.log("Key landmarks:");
-  console.log("  Alveolar ridge: X[0.3, 0.7], Y[-1.05, -1.08]");
-  console.log("  Teeth: X[0.8, 0.92], Y[-1.1, -0.35]");
-  console.log("  Soft palate: X[-1.3, -0.8], Y[-0.8, -1.0]");
-  console.log("  Tongue space: X[-1.2, 0.8], Y[-1.05, -0.25]");
-}
-
-function testAudioPatterns() {
-  if (!SparcWorker || !workerInitialized) {
-    alert('Worker not initialized yet');
-    return;
-  }
-  
-  debugLog("=== STARTING AUDIO PATTERN TESTS ===");
-  
-  const testAudio1 = new Float32Array(16000);
-  for (let i = 0; i < 16000; i++) {
-    testAudio1[i] = 0.1 * Math.sin(2 * Math.PI * 150 * i / 16000) + 
-                    0.05 * Math.sin(2 * Math.PI * 300 * i / 16000) +
-                    0.03 * Math.sin(2 * Math.PI * 450 * i / 16000);
-  }
-  
-  debugLog("Sending vowel-like test pattern...");
-  SparcWorker.postMessage({
-    type: 'process',
-    audio: testAudio1,
-    config: config,
-    sensitivityFactor: sensitivityFactor
-  });
-  
-  setTimeout(() => {
-    const testAudio2 = new Float32Array(16000);
-    for (let i = 0; i < 16000; i++) {
-      testAudio2[i] = 0.05 * (Math.random() - 0.5) * 
-                     Math.sin(2 * Math.PI * 4000 * i / 16000);
-    }
-    
-    debugLog("Sending fricative-like test pattern...");
-    SparcWorker.postMessage({
-      type: 'process',
-      audio: testAudio2,
-      config: config,
-      sensitivityFactor: sensitivityFactor
-    });
-  }, 2000);
+  }, 2500);
 }
 
 function testArticulatorAnimation() {
@@ -941,27 +897,20 @@ function testArticulatorAnimation() {
     {
       name: '/i/ (see)',
       ul: { x: 0.9, y: -1.05 }, ll: { x: 0.9, y: -0.9 }, li: { x: 0.9, y: -0.95 },
-      tt: { x: 0.6, y: -1.0 }, tb: { x: 0.2, y: -1.0 }, td: { x: -0.2, y: -0.8 }
-    },
-    {
-      name: '/e/ (bet)',
-      ul: { x: 0.9, y: -1.0 }, ll: { x: 0.9, y: -0.85 }, li: { x: 0.9, y: -0.9 },
-      tt: { x: 0.5, y: -0.8 }, tb: { x: 0.1, y: -0.8 }, td: { x: -0.3, y: -0.7 }
-    },
-    {
-      name: '/æ/ (cat)',
-      ul: { x: 0.9, y: -0.95 }, ll: { x: 0.9, y: -0.6 }, li: { x: 0.9, y: -0.75 },
-      tt: { x: 0.4, y: -0.4 }, tb: { x: -0.1, y: -0.5 }, td: { x: -0.5, y: -0.4 }
+      tt: { x: 0.6, y: -1.0 }, tb: { x: 0.2, y: -1.0 }, td: { x: -0.2, y: -0.8 },
+      jaw_opening: 0.1
     },
     {
       name: '/a/ (father)',
       ul: { x: 0.9, y: -0.9 }, ll: { x: 0.9, y: -0.5 }, li: { x: 0.9, y: -0.7 },
-      tt: { x: 0.2, y: -0.3 }, tb: { x: -0.2, y: -0.4 }, td: { x: -0.6, y: -0.3 }
+      tt: { x: 0.2, y: -0.3 }, tb: { x: -0.2, y: -0.4 }, td: { x: -0.6, y: -0.3 },
+      jaw_opening: 0.8
     },
     {
       name: '/u/ (boot)',
-      ul: { x: 0.5, y: -1.0 }, ll: { x: 0.5, y: -0.85 }, li: { x: 0.5, y: -0.9 },
-      tt: { x: -0.2, y: -0.8 }, tb: { x: -0.6, y: -0.9 }, td: { x: -1.0, y: -0.8 }
+      ul: { x: 0.6, y: -1.0 }, ll: { x: 0.6, y: -0.85 }, li: { x: 0.6, y: -0.9 },
+      tt: { x: -0.2, y: -0.8 }, tb: { x: -0.6, y: -0.9 }, td: { x: -1.0, y: -0.8 },
+      jaw_opening: 0.15
     }
   ];
   
@@ -994,6 +943,10 @@ function testArticulatorAnimation() {
       };
     });
     
+    // Interpolate jaw opening
+    const jawOpening = currentPos.jaw_opening + (nextPos.jaw_opening - currentPos.jaw_opening) * transitionProgress;
+    smoothedFeatures.jaw_opening = jawOpening;
+    
     updateFeatureHistory(features, 120 + Math.sin(frame/15)*80, -25 + Math.sin(frame/10)*25);
     updateCharts();
     
@@ -1005,214 +958,8 @@ function testArticulatorAnimation() {
     animationFrame = setTimeout(animateFrame, frameDuration / frameTransitions);
   }
   
-  updateStatus("Demo: Showing full articulator range...");
+  updateStatus("Demo: Showing full articulator range with jaw movement...");
   animateFrame();
-}
-
-/******************************************************************************
-* VISUALIZATION FUNCTIONS *
-******************************************************************************/
-// ANATOMICALLY CONSTRAINED TONGUE PATH
-function createTonguePath(tt, tb, td) {
-  // Map articulator coordinates to anatomical space
-  // tt (tongue tip): can reach from alveolar ridge to mid-palate
-  // tb (tongue body): central oral cavity, main vowel articulator  
-  // td (tongue dorsum): back of mouth, can approach soft palate
-  
-  // Sanitize inputs first
-  tt = sanitizePoint(tt, 0.4, -0.7);   // Default: mid-front, mid-height
-  tb = sanitizePoint(tb, -0.2, -0.6);  // Default: central, mid-height
-  td = sanitizePoint(td, -0.8, -0.5);  // Default: back, mid-height
-  
-  // Apply ANATOMICAL constraints based on the oral cavity boundaries
-  
-  // Tongue tip: front of mouth, can reach alveolar ridge
-  tt.x = Math.min(Math.max(tt.x, -0.5), 0.8);   // From mid-mouth to alveolar ridge
-  tt.y = Math.min(Math.max(tt.y, -1.05), -0.3); // From alveolar ridge to jaw
-  
-  // Tongue body: central oral cavity, main vowel space (see Image 2)
-  tb.x = Math.min(Math.max(tb.x, -0.8), 0.5);   // Front-back vowel dimension
-  tb.y = Math.min(Math.max(tb.y, -1.1), -0.25); // High-low vowel dimension
-  
-  // Tongue dorsum: back of mouth, can approach soft palate  
-  td.x = Math.min(Math.max(td.x, -1.2), 0.0);   // Back region only
-  td.y = Math.min(Math.max(td.y, -1.0), -0.3);  // Can approach soft palate
-  
-  // Ensure anatomical ordering: back to front progression
-  if (td.x > tb.x - 0.1) td.x = tb.x - 0.1;
-  if (tb.x > tt.x - 0.1) tb.x = tt.x - 0.1;
-  
-  // Tongue root: attached at base of mouth, back region
-  const tongueRoot = { x: -1.15, y: -0.35 };
-  
-  // Create realistic tongue surface based on Image 1 and 2 tongue shapes
-  const tonguePath = `
-    M ${tongueRoot.x} ${tongueRoot.y}
-    Q ${td.x - 0.05} ${td.y - 0.02} ${td.x} ${td.y}
-    Q ${(td.x + tb.x)/2} ${Math.min(td.y, tb.y) - 0.03} ${tb.x} ${tb.y}
-    Q ${(tb.x + tt.x)/2} ${Math.min(tb.y, tt.y) - 0.02} ${tt.x} ${tt.y}
-    L ${tt.x + 0.02} ${tt.y + 0.04}
-    Q ${tb.x + 0.02} ${tb.y + 0.06} ${td.x + 0.02} ${td.y + 0.05}
-    Q ${tongueRoot.x + 0.05} ${tongueRoot.y + 0.02} ${tongueRoot.x} ${tongueRoot.y}
-    Z
-  `;
-  
-  return tonguePath;
-}
-
-// ANATOMICALLY POSITIONED LIPS
-function createLipPaths(ul, ll, li) {
-  // Ensure we have valid inputs
-  ul = sanitizePoint(ul, 0.95, -1.0);   
-  ll = sanitizePoint(ll, 0.95, -0.4);   
-  li = sanitizePoint(li, 0.95, -0.7);   
-  
-  // Force lips to be at the front of the mouth
-  ul.x = ll.x = li.x = 0.95;
-  
-  // Ensure proper ordering
-  ul.y = Math.min(Math.max(ul.y, -1.1), -0.8);
-  ll.y = Math.min(Math.max(ll.y, -0.6), -0.3);
-  
-  // Force upper lip to be above lower lip
-  if (ul.y >= ll.y - 0.05) {
-    ll.y = ul.y + 0.05;
-  }
-  
-  const lipWidth = 0.06;
-  const leftX = 0.95 - lipWidth;
-  const rightX = 0.95 + lipWidth;
-  const centerX = 0.95;
-  
-  // SIMPLE UPPER LIP - horizontal oval
-  const upperLipPath = `
-    M ${leftX} ${ul.y + 0.01}
-    Q ${centerX} ${ul.y - 0.015} ${rightX} ${ul.y + 0.01}
-    Q ${centerX} ${ul.y + 0.025} ${leftX} ${ul.y + 0.01}
-    Z
-  `;
-  
-  // SIMPLE LOWER LIP - horizontal oval
-  const lowerLipPath = `
-    M ${leftX} ${ll.y - 0.01}
-    Q ${centerX} ${ll.y + 0.015} ${rightX} ${ll.y - 0.01}
-    Q ${centerX} ${ll.y - 0.025} ${leftX} ${ll.y - 0.01}
-    Z
-  `;
-  
-  return {
-    upperLip: upperLipPath,
-    lowerLip: lowerLipPath
-  };
-}
-
-// DEBUGGING FUNCTION to check lip positioning
-function debugLipPositions() {
-  console.log("=== DEBUGGING LIP POSITIONS ===");
-  
-  const testPositions = ['i', 'a', 'u'];
-  testPositions.forEach(vowel => {
-    const pos = VOWEL_POSITIONS[vowel];
-    console.log(`Vowel /${vowel}/:`);
-    console.log(`  UL: (${pos.ul.x}, ${pos.ul.y})`);
-    console.log(`  LL: (${pos.ll.x}, ${pos.ll.y})`);
-    console.log(`  LI: (${pos.li.x}, ${pos.li.y})`);
-    console.log(`  Opening: ${Math.abs(pos.ul.y - pos.ll.y).toFixed(3)}`);
-  });
-  
-  // Test current lip paths
-  const testLips = createLipPaths(
-    {x: 0.95, y: -1.0},
-    {x: 0.95, y: -0.7}, 
-    {x: 0.95, y: -0.85}
-  );
-  
-  console.log("Sample lip paths:", testLips);
-}
-
-// TEST FUNCTION: Check lip opening range
-function testLipOpening() {
-  console.log("=== TESTING LIP OPENING RANGE ===");
-  
-  // Test different mouth openings
-  const testCases = [
-    { name: "Closed (sleep)", ul: -1.0, ll: -0.95 },
-    { name: "Slightly open (rest)", ul: -1.0, ll: -0.8 },
-    { name: "Medium open (/e/)", ul: -1.0, ll: -0.7 },
-    { name: "Wide open (/a/)", ul: -0.9, ll: -0.4 }
-  ];
-  
-  testCases.forEach(test => {
-    const opening = test.ll - test.ul;
-    console.log(`${test.name}: UL=${test.ul}, LL=${test.ll}, Opening=${opening.toFixed(3)}`);
-    
-    // Test the lip path generation
-    const lipPaths = createLipPaths(
-      {x: 0.95, y: test.ul},
-      {x: 0.95, y: test.ll},
-      {x: 0.95, y: (test.ul + test.ll)/2}
-    );
-    console.log(`  Generated paths: ${lipPaths.upperLip.length + lipPaths.lowerLip.length} chars`);
-  });
-}
-
-function debugSVGElements() {
-  console.log("=== SVG ELEMENTS DEBUG ===");
-  
-  const upperLip = document.getElementById('upper-lip');
-  const lowerLip = document.getElementById('lower-lip');
-  
-  if (upperLip) {
-    console.log("Upper lip element:", upperLip);
-    console.log("Upper lip path:", upperLip.getAttribute('d'));
-    console.log("Upper lip style:", window.getComputedStyle(upperLip));
-  } else {
-    console.log("❌ Upper lip element not found!");
-  }
-  
-  if (lowerLip) {
-    console.log("Lower lip element:", lowerLip);
-    console.log("Lower lip path:", lowerLip.getAttribute('d'));
-    console.log("Lower lip style:", window.getComputedStyle(lowerLip));
-  } else {
-    console.log("❌ Lower lip element not found!");
-  }
-  
-  // Check if they're being rendered
-  const svg = document.getElementById('vocal-tract-svg');
-  if (svg) {
-    console.log("SVG viewBox:", svg.getAttribute('viewBox'));
-    console.log("All SVG children:", svg.children.length);
-    Array.from(svg.children).forEach((child, i) => {
-      console.log(`  ${i}: ${child.tagName} id="${child.id}" class="${child.className}"`);
-    });
-  }
-}
-
-// FORCE LIP RESET to fix stuck positions
-function resetLipPositions() {
-  console.log("🔧 Resetting lip positions...");
-  
-  // Force neutral lip positions
-  smoothedFeatures.ul_x = 0.95;
-  smoothedFeatures.ul_y = -1.0;
-  smoothedFeatures.ll_x = 0.95;
-  smoothedFeatures.ll_y = -0.7;
-  smoothedFeatures.li_x = 0.95;
-  smoothedFeatures.li_y = -0.85;
-  
-  // Update history
-  if (featureHistory.ul_x) {
-    featureHistory.ul_x.fill(0.95);
-    featureHistory.ul_y.fill(-1.0);
-    featureHistory.ll_x.fill(0.95);
-    featureHistory.ll_y.fill(-0.7);
-    featureHistory.li_x.fill(0.95);
-    featureHistory.li_y.fill(-0.85);
-  }
-  
-  updateCharts();
-  console.log("✅ Lip positions reset");
 }
 
 function updateSourceFeatures(pitch, loudness) {
@@ -1226,6 +973,7 @@ function updateSourceFeatures(pitch, loudness) {
   if (loudnessBar) loudnessBar.style.height = normalizedLoudness + '%';
 }
 
+// IMPROVED: Update charts with jaw movement
 function updateCharts() {
   try {
     if (!featureHistory || Object.keys(featureHistory).length === 0) {
@@ -1236,7 +984,7 @@ function updateCharts() {
     const articulators = ['ul', 'll', 'li', 'tt', 'tb', 'td'];
     const latestFeatures = {};
 
-    // Get latest positions (these should already be constrained)
+    // Get latest positions
     for (const art of articulators) {
       const xKey = art + '_x';
       const yKey = art + '_y';
@@ -1251,22 +999,32 @@ function updateCharts() {
       }
     }
 
-    // Update ALL markers to their constrained positions
+    // Get latest jaw opening
+    const latestJawOpening = featureHistory.jaw_opening ? 
+      featureHistory.jaw_opening[featureHistory.jaw_opening.length - 1] : 0.2;
+
+    // NEW: Update jaw position
+    const jaw = document.getElementById('jaw');
+    if (jaw) {
+      const jawPath = createJawPath(latestJawOpening);
+      jaw.setAttribute('d', jawPath);
+    }
+    
+    // NEW: Update lower teeth position
+    const lowerTeeth = document.getElementById('lower-teeth');
+    if (lowerTeeth) {
+      const teethPos = positionLowerTeeth(latestJawOpening);
+      lowerTeeth.setAttribute('x', teethPos.x);
+      lowerTeeth.setAttribute('y', teethPos.y);
+    }
+
+    // Update markers
     for (const art of articulators) {
       const marker = document.getElementById(`${art}-marker`);
       if (marker && latestFeatures[art]) {
         marker.setAttribute('cx', latestFeatures[art].x);
         marker.setAttribute('cy', latestFeatures[art].y);
       }
-    }
-
-    // Debug current positions
-    if (debugCounters.chartsUpdated % 20 === 0) {
-      debugLog("Lip positions", {
-        ul: `(${latestFeatures.ul.x.toFixed(2)}, ${latestFeatures.ul.y.toFixed(2)})`,
-        ll: `(${latestFeatures.ll.x.toFixed(2)}, ${latestFeatures.ll.y.toFixed(2)})`,
-        opening: `${(latestFeatures.ll.y - latestFeatures.ul.y).toFixed(3)}`
-      });
     }
 
     // Update tongue
@@ -1303,6 +1061,11 @@ function updateCharts() {
       const latestLoudness = featureHistory.loudness[featureHistory.loudness.length - 1];
       updateSourceFeatures(latestPitch, latestLoudness);
     }
+
+    // NEW: Update jaw opening display
+    if (typeof window.updateJawOpeningDisplay === 'function') {
+      window.updateJawOpeningDisplay(latestJawOpening);
+    }
     
   } catch (error) {
     debugLog("Error in updateCharts", error);
@@ -1310,7 +1073,6 @@ function updateCharts() {
   }
 }
 
-// Toggle debug markers function
 function toggleDebugMarkers(show) {
   const debugMarkers = document.querySelectorAll('.debug-marker');
   debugMarkers.forEach(marker => {
@@ -1434,8 +1196,13 @@ async function startRecording() {
     }
       
     isRecording = true;
-    document.getElementById('startButton').disabled = true;
-    document.getElementById('stopButton').disabled = false;
+    
+    const startButton = document.getElementById('startButton');
+    const stopButton = document.getElementById('stopButton');
+    
+    if (startButton) startButton.disabled = true;
+    if (stopButton) stopButton.disabled = false;
+    
     updateStatus("Recording...");
     debugLog("UI updated, starting feature extraction loop");
       
@@ -1464,8 +1231,13 @@ function stopRecording() {
     }
       
     isRecording = false;
-    document.getElementById('startButton').disabled = false;
-    document.getElementById('stopButton').disabled = true;
+    
+    const startButton = document.getElementById('startButton');
+    const stopButton = document.getElementById('stopButton');
+    
+    if (startButton) startButton.disabled = false;
+    if (stopButton) stopButton.disabled = true;
+    
     updateStatus("Recording stopped.");
 
     if (!animationRunning) {

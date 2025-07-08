@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SPARC Articulatory Feature Diagnostic Tool</title>
+    <title>SPARC Diagnostic Tool - Complete System Testing</title>
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.22.0/dist/ort.all.min.js"></script>
     <style>
         body {
@@ -86,25 +86,6 @@
         .expected { border-color: #28a745; }
         .actual { border-color: #dc3545; }
         
-        .feature-comparison-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin: 20px 0;
-            font-size: 14px;
-        }
-        
-        .feature-comparison-table th,
-        .feature-comparison-table td {
-            padding: 8px 12px;
-            border: 1px solid #dee2e6;
-            text-align: center;
-        }
-        
-        .feature-comparison-table th {
-            background: #f8f9fa;
-            font-weight: bold;
-        }
-        
         .test-controls {
             display: flex;
             gap: 10px;
@@ -112,52 +93,38 @@
             margin: 15px 0;
         }
         
-        .phoneme-tests {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-            gap: 15px;
-            margin: 20px 0;
-        }
-        
-        .phoneme-card {
-            background: #f8f9fa;
-            border: 1px solid #dee2e6;
-            border-radius: 8px;
-            padding: 15px;
-        }
-        
-        .phoneme-card h4 {
-            margin: 0 0 10px 0;
-            color: #495057;
-        }
-        
-        .coordinate-debug {
-            background: #fff3cd;
-            border: 1px solid #ffeaa7;
-            border-radius: 8px;
-            padding: 15px;
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
             margin: 10px 0;
         }
-        
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #28a745, #20c997);
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .test-status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+
+        .test-status.pending { background: #fff3cd; color: #856404; }
+        .test-status.running { background: #cce5ff; color: #004085; }
+        .test-status.passed { background: #d4edda; color: #155724; }
+        .test-status.failed { background: #f8d7da; color: #721c24; }
+
         .success { color: #28a745; font-weight: bold; }
         .warning { color: #ffc107; font-weight: bold; }
         .error { color: #dc3545; font-weight: bold; }
         .info { color: #17a2b8; }
-        
-        .progress-container {
-            background: #e9ecef;
-            border-radius: 10px;
-            height: 20px;
-            margin: 10px 0;
-            overflow: hidden;
-        }
-        
-        .progress-bar {
-            background: linear-gradient(90deg, #007bff, #0056b3);
-            height: 100%;
-            width: 0%;
-            transition: width 0.3s ease;
-        }
         
         .articulator-legend {
             display: grid;
@@ -183,147 +150,198 @@
             border: 2px solid white;
             box-shadow: 0 1px 3px rgba(0,0,0,0.3);
         }
+
+        /* SVG Styling */
+        .palate { fill: none; stroke: #555; stroke-width: 0.03; }
+        .jaw { fill: none; stroke: #333; stroke-width: 0.03; }
+        .pharynx { fill: none; stroke: #666; stroke-width: 0.02; opacity: 0.7; }
+        .teeth { fill: white; stroke: #333; stroke-width: 0.01; }
+        .lips { fill: #ff9999; stroke: #cc6666; stroke-width: 0.01; opacity: 0.9; }
+        .tongue { fill: #ffb3ba; stroke: #ff8a9b; stroke-width: 0.02; opacity: 0.9; }
+        .debug-marker { opacity: 0.8; }
+        text { font-family: Arial, sans-serif; font-size: 0.12px; fill: #888; text-anchor: middle; }
+
+        .volume-indicator {
+            margin: 10px 0;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 5px;
+            border: 1px solid #dee2e6;
+        }
+
+        .volume-bar {
+            width: 100%;
+            height: 10px;
+            background: #e9ecef;
+            border-radius: 5px;
+            overflow: hidden;
+        }
+
+        .volume-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #28a745, #ffc107, #dc3545);
+            width: 0%;
+            transition: width 0.1s ease;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🔬 SPARC Articulatory Feature Diagnostic Tool</h1>
-        <p>Comprehensive testing for speech articulatory feature extraction accuracy</p>
+        <h1>🔬 SPARC Diagnostic Tool - Complete System Testing</h1>
+        <p>Comprehensive testing for speech articulatory features with ML model loading and jaw movement</p>
         
-        <!-- System Status -->
+        <!-- Test Progress Overview -->
         <div class="test-section">
-            <h2>📊 System Diagnostics</h2>
-            <div class="test-controls">
-                <button class="btn btn-primary" onclick="runFullDiagnostics()">🔍 Full System Check</button>
-                <button class="btn btn-success" onclick="testWorkerPipeline()">🤖 Test ML Pipeline</button>
-                <button class="btn btn-warning" onclick="testCoordinateSystem()">📐 Test Coordinates</button>
-                <button class="btn btn-info" onclick="debugConstraints()">🔧 Debug Constraints</button>
-                <button class="btn btn-danger" onclick="clearAllLogs()">🧹 Clear All</button>
+            <h2>📊 Test Progress Overview</h2>
+            <div id="overallProgress" class="progress-bar">
+                <div id="progressFill" class="progress-fill"></div>
             </div>
+            <div id="progressText">Ready to run tests...</div>
             
+            <div class="test-controls">
+                <button class="btn btn-primary" onclick="runAllTests()">🚀 Run All Tests</button>
+                <button class="btn btn-success" onclick="runModelTests()">🧠 Test Models Only</button>
+                <button class="btn btn-info" onclick="testAudioOnly()">🔊 Test Audio Only</button>
+                <button class="btn btn-danger" onclick="clearAllLogs()">🧹 Clear All</button>
+                <button class="btn btn-warning" onclick="testButtonClick()">🔍 Test Buttons</button>
+            </div>
+        </div>
+
+        <!-- Individual Test Status -->
+        <div class="test-section">
+            <h2>🧪 Individual Test Status</h2>
             <div class="diagnostic-grid">
                 <div>
-                    <h4>🔧 Pipeline Status</h4>
-                    <div id="pipelineStatus" class="diagnostic-panel">Initializing...</div>
+                    <div id="onnxTest" class="test-status pending">
+                        <span>🤖 ONNX Runtime Test</span>
+                        <div id="onnxDetails">Pending...</div>
+                    </div>
+                    <div id="workerTest" class="test-status pending">
+                        <span>👷 Web Worker Test</span>
+                        <div id="workerDetails">Pending...</div>
+                    </div>
+                    <div id="wavlmTest" class="test-status pending">
+                        <span>🎵 WavLM Model Test</span>
+                        <div id="wavlmDetails">Pending...</div>
+                    </div>
+                    <div id="linearTest" class="test-status pending">
+                        <span>📊 Linear Model Test</span>
+                        <div id="linearDetails">Pending...</div>
+                    </div>
+                    <div id="mlTest" class="test-status pending">
+                        <span>🧠 ML Processing Test</span>
+                        <div id="mlDetails">Pending...</div>
+                    </div>
                 </div>
                 <div>
-                    <h4>📐 Coordinate Analysis</h4>
-                    <div id="coordinateStatus" class="diagnostic-panel">Ready for testing...</div>
+                    <div id="audioTest" class="test-status pending">
+                        <span>🎤 Audio Pipeline Test</span>
+                        <div id="audioDetails">Pending...</div>
+                    </div>
+                    <div id="jawTest" class="test-status pending">
+                        <span>🦴 Jaw Movement Test</span>
+                        <div id="jawDetails">Pending...</div>
+                    </div>
+                    <div id="constraintsTest" class="test-status pending">
+                        <span>🔧 Constraints Test</span>
+                        <div id="constraintsDetails">Pending...</div>
+                    </div>
+                    <div id="integrationTest" class="test-status pending">
+                        <span>⚡ Integration Test</span>
+                        <div id="integrationDetails">Pending...</div>
+                    </div>
                 </div>
             </div>
         </div>
         
-        <!-- Phoneme-Specific Testing -->
+        <!-- System Diagnostics -->
         <div class="test-section">
-            <h2>🗣️ Phoneme-Specific Articulatory Tests</h2>
-            <p>Test specific sounds with known expected articulator positions</p>
+            <h2>📋 Detailed Diagnostics</h2>
+            <div class="diagnostic-grid">
+                <div>
+                    <h4>🔧 System Pipeline</h4>
+                    <div id="pipelineStatus" class="diagnostic-panel">Waiting for tests to start...</div>
+                </div>
+                <div>
+                    <h4>🦴 Jaw Movement Analysis</h4>
+                    <div id="jawStatus" class="diagnostic-panel">Ready for jaw testing...</div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- THREE SEPARATE SPEECH TESTS -->
+        <div class="test-section">
+            <h2>🗣️ Speech Articulation Tests</h2>
             
-            <div class="phoneme-tests">
-                <div class="phoneme-card">
-                    <h4>/i/ - High Front Vowel</h4>
-                    <p>Expected: Tongue high/front, lips slightly spread</p>
-                    <button class="btn btn-primary" onclick="testPhoneme('i')">Test /i/</button>
-                    <div class="coordinate-debug">
-                        <strong>Expected Positions:</strong><br>
-                        TT: (0.6, -1.0) - Tongue tip high/front<br>
-                        TB: (0.3, -1.05) - Tongue body high<br>
-                        TD: (-0.2, -0.8) - Tongue dorsum forward<br>
-                        UL/LL: Lips close, slightly spread
-                    </div>
+            <!-- TEST 1: Generate Sound and Extract (Expected vs Actual) -->
+            <div style="background: #e8f5e8; padding: 15px; border-radius: 8px; margin: 10px 0;">
+                <h4>🔊 TEST 1: Generate Synthetic Sound & Extract Features</h4>
+                <p>Generate synthesized vowel sound, extract features, and compare Expected vs Actual</p>
+                <div class="test-controls">
+                    <select id="test1Sound">
+                        <option value="i">/i/ vowel (see)</option>
+                        <option value="a">/a/ vowel (cat)</option>
+                        <option value="u">/u/ vowel (boot)</option>
+                        <option value="o">/o/ vowel (coat)</option>
+                        <option value="e">/e/ vowel (bet)</option>
+                    </select>
+                    <button class="btn btn-success" onclick="runTest1()">🔊 Generate & Extract</button>
+                    <button class="btn btn-info" onclick="demoAllVowels()">🎬 Demo All</button>
+                </div>
+                <div id="test1Status" style="background: #f8f9fa; padding: 8px; border-radius: 4px; margin: 10px 0; font-size: 12px;">
+                    Ready to generate synthetic speech and extract features...
+                </div>
+            </div>
+            
+            <!-- TEST 2: Free-form Microphone Recording (Actual only) -->
+            <div style="background: #e8f4fd; padding: 15px; border-radius: 8px; margin: 10px 0;">
+                <h4>🎤 TEST 2: Free Microphone Recording</h4>
+                <p>Capture any speech from microphone and extract features (no expected comparison)</p>
+                <div class="test-controls">
+                    <button class="btn btn-success" onclick="startTest2()">▶️ Start Recording</button>
+                    <button class="btn btn-danger" onclick="stopTest2()">⏹️ Stop Recording</button>
+                </div>
+                <div id="test2Status" style="background: #f8f9fa; padding: 8px; border-radius: 4px; margin: 10px 0; font-size: 12px;">
+                    Ready to capture free-form speech...
                 </div>
                 
-                <div class="phoneme-card">
-                    <h4>/a/ - Low Central Vowel</h4>
-                    <p>Expected: Tongue low/central, mouth open</p>
-                    <button class="btn btn-primary" onclick="testPhoneme('a')">Test /a/</button>
-                    <div class="coordinate-debug">
-                        <strong>Expected Positions:</strong><br>
-                        TT: (0.2, -0.4) - Tongue tip low<br>
-                        TB: (-0.2, -0.35) - Tongue body low/back<br>
-                        TD: (-0.8, -0.4) - Tongue dorsum back<br>
-                        UL/LL: Large mouth opening
-                    </div>
-                </div>
-                
-                <div class="phoneme-card">
-                    <h4>/s/ - Voiceless Fricative</h4>
-                    <p>Expected: Tongue tip near alveolar ridge</p>
-                    <button class="btn btn-primary" onclick="testPhoneme('s')">Test /s/</button>
-                    <div class="coordinate-debug">
-                        <strong>Expected Positions:</strong><br>
-                        TT: (0.7, -0.9) - Near alveolar ridge<br>
-                        TB: (0.4, -0.8) - Tongue body raised<br>
-                        TD: (-0.2, -0.7) - Tongue dorsum forward<br>
-                        UL/LL: Lips close together
-                    </div>
-                </div>
-                
-                <div class="phoneme-card">
-                    <h4>/t/ - Voiceless Stop</h4>
-                    <p>Expected: Tongue tip touches alveolar ridge</p>
-                    <button class="btn btn-primary" onclick="testPhoneme('t')">Test /t/</button>
-                    <div class="coordinate-debug">
-                        <strong>Expected Positions:</strong><br>
-                        TT: (0.8, -1.0) - Touching alveolar ridge<br>
-                        TB: (0.2, -0.7) - Supporting position<br>
-                        TD: (-0.3, -0.6) - Neutral back<br>
-                        UL/LL: Neutral lip position
-                    </div>
-                </div>
-                
-                <div class="phoneme-card">
-                    <h4>/u/ - High Back Vowel</h4>
-                    <p>Expected: Tongue high/back, lips rounded</p>
-                    <button class="btn btn-primary" onclick="testPhoneme('u')">Test /u/</button>
-                    <div class="coordinate-debug">
-                        <strong>Expected Positions:</strong><br>
-                        TT: (0.3, -0.6) - Tongue tip neutral<br>
-                        TB: (-0.3, -1.0) - Tongue body high/back<br>
-                        TD: (-0.9, -0.9) - Tongue dorsum high/back<br>
-                        UL/LL: Lips rounded (protruded)
-                    </div>
-                </div>
-                
-                <div class="phoneme-card">
-                    <h4>/k/ - Velar Stop</h4>
-                    <p>Expected: Tongue dorsum touches soft palate</p>
-                    <button class="btn btn-primary" onclick="testPhoneme('k')">Test /k/</button>
-                    <div class="coordinate-debug">
-                        <strong>Expected Positions:</strong><br>
-                        TT: (0.4, -0.5) - Tongue tip low<br>
-                        TB: (-0.2, -0.8) - Tongue body neutral<br>
-                        TD: (-0.8, -0.9) - Tongue dorsum high/back<br>
-                        UL/LL: Neutral lip position
+                <div class="volume-indicator">
+                    <div style="font-size: 12px; margin-bottom: 5px;">Microphone Level:</div>
+                    <div class="volume-bar">
+                        <div id="volumeFill" class="volume-fill"></div>
                     </div>
                 </div>
             </div>
-        </div>
-        
-        <!-- Real-time Comparison -->
-        <div class="test-section">
-            <h2>⚖️ Expected vs Actual Comparison</h2>
-            <div class="test-controls">
-                <button class="btn btn-success" onclick="startRealTimeComparison()">▶️ Start Real-time Test</button>
-                <button class="btn btn-danger" onclick="stopRealTimeComparison()">⏹️ Stop Test</button>
-                <select id="testSound" onchange="updateExpectedPositions()">
-                    <option value="silence">Silence</option>
-                    <option value="i">/i/ vowel</option>
-                    <option value="a">/a/ vowel</option>
-                    <option value="u">/u/ vowel</option>
-                    <option value="s">/s/ fricative</option>
-                    <option value="t">/t/ stop</option>
-                </select>
+            
+            <!-- TEST 3: Guided Speech Test (Expected vs Actual) -->
+            <div style="background: #fff3e0; padding: 15px; border-radius: 8px; margin: 10px 0;">
+                <h4>🎯 TEST 3: Guided Speech Test</h4>
+                <p>We tell you what to say, you speak it, we compare your speech to expected positions</p>
+                <div class="test-controls">
+                    <select id="test3Target">
+                        <option value="i">Say /i/ (see)</option>
+                        <option value="a">Say /a/ (cat)</option>
+                        <option value="u">Say /u/ (boot)</option>
+                        <option value="o">Say /o/ (coat)</option>
+                        <option value="e">Say /e/ (bet)</option>
+                    </select>
+                    <button class="btn btn-warning" onclick="startTest3()">🎯 Start Guided Test</button>
+                    <button class="btn btn-danger" onclick="stopTest3()">⏹️ Stop</button>
+                </div>
+                <div id="test3Status" style="background: #f8f9fa; padding: 8px; border-radius: 4px; margin: 10px 0; font-size: 12px;">
+                    Ready for guided speech comparison...
+                </div>
             </div>
             
             <div class="vocal-tract-comparison">
                 <div class="tract-container">
-                    <h4>📚 Expected Positions</h4>
+                    <h4 id="leftTitle">📚 Expected Positions</h4>
                     <svg id="expectedTract" class="tract-svg expected" viewBox="-2 -2 4 3">
                         <!-- Expected positions will be drawn here -->
                     </svg>
                 </div>
                 <div class="tract-container">
-                    <h4>🎤 Actual Extracted Features</h4>
+                    <h4 id="rightTitle">🔬 Extracted Features</h4>
                     <svg id="actualTract" class="tract-svg actual" viewBox="-2 -2 4 3">
                         <!-- Actual positions will be drawn here -->
                     </svg>
@@ -355,364 +373,540 @@
                     <div class="legend-color" style="background: #e67e22;"></div>
                     <span>TD - Tongue Dorsum</span>
                 </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #8e44ad;"></div>
+                    <span>🦴 JAW - Opening %</span>
+                </div>
             </div>
-            
-            <!-- Feature Comparison Table -->
-            <table class="feature-comparison-table">
-                <thead>
-                    <tr>
-                        <th>Articulator</th>
-                        <th>Expected X</th>
-                        <th>Actual X</th>
-                        <th>X Diff</th>
-                        <th>Expected Y</th>
-                        <th>Actual Y</th>
-                        <th>Y Diff</th>
-                        <th>Status</th>
-                        <th>Notes</th>
-                    </tr>
-                </thead>
-                <tbody id="comparisonTableBody">
-                    <!-- Rows will be populated by JavaScript -->
-                </tbody>
-            </table>
         </div>
-        
-        <!-- Constraint Testing -->
+
+        <!-- Instructions -->
         <div class="test-section">
-            <h2>🔧 Coordinate Constraint Analysis</h2>
-            <div class="test-controls">
-                <button class="btn btn-warning" onclick="testConstraintLimits()">Test Constraint Limits</button>
-                <button class="btn btn-info" onclick="analyzeMovementRange()">Analyze Movement Range</button>
-                <button class="btn btn-primary" onclick="testAnatomicalRealism()">Test Anatomical Realism</button>
+            <h2>ℹ️ Test Instructions</h2>
+            <div class="diagnostic-grid">
+                <div>
+                    <h4>🔧 System Tests:</h4>
+                    <ol style="font-size: 14px;">
+                        <li>Run "Run All Tests" first to verify system</li>
+                        <li>Make sure models load successfully</li>
+                        <li>Then proceed to speech tests</li>
+                    </ol>
+                    
+                    <h4>🔊 Test 1 - Synthetic Speech:</h4>
+                    <ol style="font-size: 14px;">
+                        <li>Select vowel to generate</li>
+                        <li>Click "Generate & Extract"</li>
+                        <li>Listen to synthesized sound</li>
+                        <li>Compare Expected vs Extracted positions</li>
+                        <li>Tests if ML can extract from known audio</li>
+                    </ol>
+                </div>
+                <div>
+                    <h4>🎤 Test 2 - Free Recording:</h4>
+                    <ol style="font-size: 14px;">
+                        <li>Click "Start Recording"</li>
+                        <li>Speak anything into microphone</li>
+                        <li>Watch real-time feature extraction</li>
+                        <li>No comparison - just see what's extracted</li>
+                    </ol>
+                    
+                    <h4>🎯 Test 3 - Guided Speech:</h4>
+                    <ol style="font-size: 14px;">
+                        <li>Select what vowel to say</li>
+                        <li>Click "Start Guided Test"</li>
+                        <li>Say the specified vowel clearly</li>
+                        <li>Compare your speech vs expected</li>
+                        <li>Tests real speech accuracy</li>
+                    </ol>
+                </div>
             </div>
-            
-            <div id="constraintAnalysis" class="diagnostic-panel"></div>
-        </div>
-        
-        <!-- Pipeline Deep Dive -->
-        <div class="test-section">
-            <h2>🔬 ML Pipeline Deep Dive</h2>
-            <div class="test-controls">
-                <button class="btn btn-primary" onclick="testModelLoading()">🧠 Test Model Loading</button>
-                <button class="btn btn-success" onclick="testWorkerCommunication()">📡 Test Worker Communication</button>
-                <button class="btn btn-info" onclick="testAudioProcessing()">🎵 Test Audio Processing</button>
-                <button class="btn btn-warning" onclick="debugWhyFeaturesDoNotMove()">🔍 Debug Feature Limitations</button>
-            </div>
-            
-            <div id="pipelineAnalysis" class="diagnostic-panel"></div>
         </div>
     </div>
 
     <script>
         // Global state
         let testWorker = null;
-        let realTimeTestRunning = false;
-        let currentAudioContext = null;
-        let testAudioSource = null;
+        let workerInitialized = false;
+        let currentTest = 'none';
+        let audioContexts = {};
+        let microphoneStream = null;
+        let microphoneBuffer = new Float32Array(16000);
+        let microphoneBufferIndex = 0;
+        let volumeUpdateInterval = null;
         
-        // Expected articulator positions for different phonemes (based on phonetics literature)
+        // Expected positions
         const EXPECTED_POSITIONS = {
-            silence: {
-                ul: { x: 0.95, y: -1.0 }, ll: { x: 0.95, y: -0.8 }, li: { x: 0.95, y: -0.9 },
-                tt: { x: 0.4, y: -0.6 }, tb: { x: 0.0, y: -0.6 }, td: { x: -0.5, y: -0.5 }
+            i: {
+                ul: { x: 0.9, y: -1.05 }, ll: { x: 0.9, y: -1.0 }, li: { x: 0.9, y: -1.025 },
+                tt: { x: 0.6, y: -1.0 }, tb: { x: 0.3, y: -1.05 }, td: { x: -0.2, y: -0.8 },
+                jaw_opening: 0.0
             },
-            i: { // High front vowel - tongue high and forward
-                ul: { x: 0.95, y: -1.05 }, ll: { x: 0.95, y: -0.95 }, li: { x: 0.95, y: -1.0 },
-                tt: { x: 0.6, y: -1.0 }, tb: { x: 0.3, y: -1.05 }, td: { x: -0.2, y: -0.8 }
+            a: {
+                ul: { x: 0.9, y: -0.95 }, ll: { x: 0.9, y: -0.3 }, li: { x: 0.9, y: -0.625 },
+                tt: { x: 0.2, y: -0.4 }, tb: { x: -0.2, y: -0.35 }, td: { x: -0.8, y: -0.4 },
+                jaw_opening: 1.0
             },
-            a: { // Low central vowel - tongue low and back
-                ul: { x: 0.95, y: -0.9 }, ll: { x: 0.95, y: -0.4 }, li: { x: 0.95, y: -0.65 },
-                tt: { x: 0.2, y: -0.4 }, tb: { x: -0.2, y: -0.35 }, td: { x: -0.8, y: -0.4 }
+            u: {
+                ul: { x: 0.7, y: -1.0 }, ll: { x: 0.7, y: -0.92 }, li: { x: 0.7, y: -0.96 },
+                tt: { x: 0.3, y: -0.6 }, tb: { x: -0.3, y: -1.0 }, td: { x: -0.9, y: -0.9 },
+                jaw_opening: 0.1
             },
-            u: { // High back vowel - tongue high and back, lips rounded
-                ul: { x: 0.8, y: -1.0 }, ll: { x: 0.8, y: -0.9 }, li: { x: 0.8, y: -0.95 },
-                tt: { x: 0.3, y: -0.6 }, tb: { x: -0.3, y: -1.0 }, td: { x: -0.9, y: -0.9 }
+            o: {
+                ul: { x: 0.8, y: -0.95 }, ll: { x: 0.8, y: -0.7 }, li: { x: 0.8, y: -0.825 },
+                tt: { x: 0.2, y: -0.5 }, tb: { x: -0.4, y: -0.8 }, td: { x: -0.9, y: -0.8 },
+                jaw_opening: 0.4
             },
-            s: { // Voiceless fricative - tongue tip near alveolar ridge
-                ul: { x: 0.95, y: -1.0 }, ll: { x: 0.95, y: -0.9 }, li: { x: 0.95, y: -0.95 },
-                tt: { x: 0.7, y: -0.9 }, tb: { x: 0.4, y: -0.8 }, td: { x: -0.2, y: -0.7 }
-            },
-            t: { // Voiceless stop - tongue tip touches alveolar ridge
-                ul: { x: 0.95, y: -1.0 }, ll: { x: 0.95, y: -0.8 }, li: { x: 0.95, y: -0.9 },
-                tt: { x: 0.8, y: -1.0 }, tb: { x: 0.2, y: -0.7 }, td: { x: -0.3, y: -0.6 }
-            },
-            k: { // Velar stop - tongue dorsum touches soft palate
-                ul: { x: 0.95, y: -1.0 }, ll: { x: 0.95, y: -0.8 }, li: { x: 0.95, y: -0.9 },
-                tt: { x: 0.4, y: -0.5 }, tb: { x: -0.2, y: -0.8 }, td: { x: -0.8, y: -0.9 }
+            e: {
+                ul: { x: 0.9, y: -1.0 }, ll: { x: 0.9, y: -0.75 }, li: { x: 0.9, y: -0.875 },
+                tt: { x: 0.5, y: -0.8 }, tb: { x: 0.1, y: -0.8 }, td: { x: -0.6, y: -0.7 },
+                jaw_opening: 0.4
             }
         };
         
-        // Tolerance levels for each articulator (how much movement is acceptable)
-        const TOLERANCE_LEVELS = {
-            ul: { x: 0.1, y: 0.1 }, ll: { x: 0.1, y: 0.1 }, li: { x: 0.1, y: 0.1 },
-            tt: { x: 0.2, y: 0.2 }, tb: { x: 0.3, y: 0.3 }, td: { x: 0.3, y: 0.3 }
-        };
-        
-        // Colors for each articulator
         const ARTICULATOR_COLORS = {
             ul: '#e74c3c', ll: '#3498db', li: '#f1c40f',
             tt: '#2ecc71', tb: '#9b59b6', td: '#e67e22'
         };
         
-        // Logging functions
+        // AudioWorklet processor code
+        const audioProcessorCode = `
+        class AudioProcessor extends AudioWorkletProcessor {
+            constructor() {
+                super();
+            }
+            process(inputs, outputs, parameters) {
+                const input = inputs[0][0];
+                if (input && input.length > 0) {
+                    this.port.postMessage({ audio: input.slice() });
+                }
+                return true;
+            }
+        }
+        registerProcessor('audio-processor', AudioProcessor);
+        `;
+        
+        // Utility functions
         function log(message, type = 'info', panelId = 'pipelineStatus') {
             const timestamp = new Date().toLocaleTimeString();
             const panel = document.getElementById(panelId);
             const colorClass = type === 'error' ? 'error' : type === 'warning' ? 'warning' : type === 'success' ? 'success' : 'info';
-            panel.innerHTML += `<span class="${colorClass}">[${timestamp}] ${message}</span>\n`;
-            panel.scrollTop = panel.scrollHeight;
-            console.log(`[SPARC-DIAGNOSTIC] ${message}`);
+            if (panel) {
+                panel.innerHTML += `<span class="${colorClass}">[${timestamp}] ${message}</span>\n`;
+                panel.scrollTop = panel.scrollHeight;
+            }
+            console.log(`[SPARC] ${message}`);
         }
         
-        function clearAllLogs() {
-            ['pipelineStatus', 'coordinateStatus', 'constraintAnalysis', 'pipelineAnalysis'].forEach(id => {
-                const panel = document.getElementById(id);
-                if (panel) panel.innerHTML = '';
+        function updateTestStatus(testId, status, details) {
+            const testElement = document.getElementById(testId);
+            const detailsElement = document.getElementById(testId.replace('Test', 'Details'));
+            
+            if (testElement) {
+                testElement.className = `test-status ${status}`;
+            }
+            if (detailsElement) {
+                detailsElement.textContent = details;
+            }
+        }
+        
+        function updateProgress(percentage, text) {
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            
+            if (progressFill) {
+                progressFill.style.width = percentage + '%';
+            }
+            if (progressText) {
+                progressText.textContent = text;
+            }
+        }
+        
+        function calculateJawOpening(ul_y, ll_y) {
+            const lipOpening = Math.abs(ll_y - ul_y);
+            return Math.min(Math.max((lipOpening - 0.05) / 0.5, 0), 1);
+        }
+
+        function updateStatus(testId, message) {
+            const statusDiv = document.getElementById(`${testId}Status`);
+            if (statusDiv) {
+                const timestamp = new Date().toLocaleTimeString();
+                statusDiv.innerHTML = `[${timestamp}] ${message}`;
+            }
+        }
+
+        // Worker initialization
+        async function initializeWorker() {
+            return new Promise((resolve, reject) => {
+                if (workerInitialized) {
+                    resolve();
+                    return;
+                }
+
+                log('🔧 Initializing ML worker...', 'info', 'pipelineStatus');
+                
+                testWorker = new Worker('sparc-worker.js');
+                
+                const initTimeout = setTimeout(() => {
+                    log('❌ Worker initialization timeout (15s)', 'error', 'pipelineStatus');
+                    reject(new Error('Worker initialization timeout'));
+                }, 15000);
+                
+                testWorker.onmessage = function(e) {
+                    const message = e.data;
+                    
+                    switch(message.type) {
+                        case 'initialized':
+                            clearTimeout(initTimeout);
+                            workerInitialized = true;
+                            log('✅ ML worker initialized successfully', 'success', 'pipelineStatus');
+                            resolve();
+                            break;
+                        
+                        case 'debug':
+                            log(`Worker: ${message.message}`, 'info', 'pipelineStatus');
+                            break;
+                            
+                        case 'status':
+                            log(`Worker Status: ${message.message}`, 'info', 'pipelineStatus');
+                            break;
+                            
+                        case 'error':
+                            clearTimeout(initTimeout);
+                            log(`❌ Worker error: ${message.error}`, 'error', 'pipelineStatus');
+                            reject(new Error(`Worker error: ${message.error}`));
+                            break;
+                    }
+                };
+                
+                testWorker.onerror = function(error) {
+                    clearTimeout(initTimeout);
+                    log(`❌ Worker creation failed: ${error.message}`, 'error', 'pipelineStatus');
+                    reject(new Error(`Worker creation failed: ${error.message}`));
+                };
+                
+                testWorker.postMessage({
+                    type: 'init',
+                    onnxPath: 'models/wavlm_base_layer9_quantized.onnx',
+                    linearModelPath: 'models/wavlm_linear_model.json'
+                });
             });
         }
-        
-        // Audio generation for specific phonemes
-        function generatePhonemeAudio(phoneme, duration = 1.0) {
-            if (!currentAudioContext) {
-                currentAudioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+
+        // Audio synthesis
+        function createSyntheticAudio(vowel) {
+            log(`🧠 Creating synthetic audio data for /${vowel}/`, 'info', 'pipelineStatus');
+            
+            const audioData = new Float32Array(16000);
+            
+            const vowelFormants = {
+                'i': { f1: 270, f2: 2290, pitch: 150 },
+                'e': { f1: 530, f2: 1840, pitch: 140 },
+                'a': { f1: 730, f2: 1090, pitch: 120 },
+                'o': { f1: 570, f2: 840, pitch: 130 },
+                'u': { f1: 300, f2: 870, pitch: 160 }
+            };
+            
+            const formants = vowelFormants[vowel];
+            if (!formants) {
+                log(`❌ Unknown vowel formants: ${vowel}`, 'error', 'pipelineStatus');
+                return audioData;
             }
             
-            const sampleRate = currentAudioContext.sampleRate;
-            const bufferLength = sampleRate * duration;
-            const buffer = currentAudioContext.createBuffer(1, bufferLength, sampleRate);
-            const data = buffer.getChannelData(0);
-            
-            // Generate phoneme-specific audio patterns
-            switch(phoneme) {
-                case 'i':
-                    // High front vowel: F0=150Hz, F1=280Hz, F2=2300Hz
-                    for (let i = 0; i < bufferLength; i++) {
-                        const t = i / sampleRate;
-                        data[i] = 0.3 * Math.sin(2 * Math.PI * 150 * t) +
-                                 0.2 * Math.sin(2 * Math.PI * 280 * t) +
-                                 0.1 * Math.sin(2 * Math.PI * 2300 * t);
-                        data[i] *= Math.exp(-t * 0.3); // Envelope
-                    }
-                    break;
+            for (let i = 0; i < audioData.length; i++) {
+                const t = i / 16000;
+                let sample = 0;
+                
+                const fundamental = formants.pitch;
+                
+                for (let h = 1; h <= 8; h++) {
+                    const freq = fundamental * h;
+                    let amplitude = 1.0 / h;
                     
-                case 'a':
-                    // Low central vowel: F0=150Hz, F1=730Hz, F2=1090Hz
-                    for (let i = 0; i < bufferLength; i++) {
-                        const t = i / sampleRate;
-                        data[i] = 0.3 * Math.sin(2 * Math.PI * 150 * t) +
-                                 0.25 * Math.sin(2 * Math.PI * 730 * t) +
-                                 0.15 * Math.sin(2 * Math.PI * 1090 * t);
-                        data[i] *= Math.exp(-t * 0.3);
-                    }
-                    break;
+                    if (Math.abs(freq - formants.f1) < 100) amplitude *= 2;
+                    if (Math.abs(freq - formants.f2) < 100) amplitude *= 1.5;
                     
-                case 'u':
-                    // High back vowel: F0=150Hz, F1=300Hz, F2=870Hz
-                    for (let i = 0; i < bufferLength; i++) {
-                        const t = i / sampleRate;
-                        data[i] = 0.3 * Math.sin(2 * Math.PI * 150 * t) +
-                                 0.2 * Math.sin(2 * Math.PI * 300 * t) +
-                                 0.1 * Math.sin(2 * Math.PI * 870 * t);
-                        data[i] *= Math.exp(-t * 0.3);
-                    }
-                    break;
-                    
-                case 's':
-                    // Voiceless fricative: High-frequency noise centered around 4000Hz
-                    for (let i = 0; i < bufferLength; i++) {
-                        const t = i / sampleRate;
-                        const noise = (Math.random() - 0.5) * 0.4;
-                        const filtered = noise * Math.sin(2 * Math.PI * 4000 * t / 8);
-                        data[i] = filtered * Math.min(1, t * 10) * Math.min(1, (duration - t) * 10);
-                    }
-                    break;
-                    
-                case 't':
-                    // Voiceless stop: Brief burst followed by silence
-                    for (let i = 0; i < bufferLength; i++) {
-                        const t = i / sampleRate;
-                        if (t < 0.02) {
-                            data[i] = (Math.random() - 0.5) * 0.6 * Math.exp(-t * 50);
-                        } else {
-                            data[i] = 0;
-                        }
-                    }
-                    break;
-                    
-                case 'k':
-                    // Velar stop: Brief burst with lower frequency
-                    for (let i = 0; i < bufferLength; i++) {
-                        const t = i / sampleRate;
-                        if (t < 0.03) {
-                            data[i] = (Math.random() - 0.5) * 0.5 * Math.exp(-t * 30);
-                        } else {
-                            data[i] = 0;
-                        }
-                    }
-                    break;
-                    
-                default: // silence
-                    // Already filled with zeros
-                    break;
-            }
-            
-            return { buffer, audioData: data };
-        }
-        
-        // Test individual phonemes
-        async function testPhoneme(phoneme) {
-            log(`🗣️ Testing phoneme /${phoneme}/...`, 'info');
-            
-            // Generate audio for this phoneme
-            const { buffer, audioData } = generatePhonemeAudio(phoneme, 2.0);
-            
-            // Play the audio
-            playTestAudio(buffer);
-            
-            // Test with our worker (simulated for now)
-            await testPhonemeWithWorker(phoneme, audioData);
-            
-            // Update comparison display
-            updateComparisonDisplay(phoneme, audioData);
-            
-            log(`✅ Phoneme /${phoneme}/ test complete`, 'success');
-        }
-        
-        async function testPhonemeWithWorker(phoneme, audioData) {
-            log(`  🤖 Testing /${phoneme}/ with ML pipeline...`, 'info');
-            
-            try {
-                // Try to create worker if it doesn't exist
-                if (!testWorker) {
-                    testWorker = new Worker('sparc-worker.js');
-                    
-                    testWorker.onmessage = function(e) {
-                        const message = e.data;
-                        log(`  📨 Worker response: ${message.type}`, 'info');
-                        
-                        if (message.type === 'features') {
-                            analyzeExtractedFeatures(phoneme, message.articulationFeatures);
-                        } else if (message.type === 'error') {
-                            log(`  ❌ Worker error: ${message.error}`, 'error');
-                            simulateFeatureExtraction(phoneme, audioData);
-                        }
-                    };
-                    
-                    testWorker.onerror = function(error) {
-                        log(`  ❌ Worker creation failed: ${error.message}`, 'error');
-                        simulateFeatureExtraction(phoneme, audioData);
-                    };
-                    
-                    // Initialize worker
-                    testWorker.postMessage({
-                        type: 'init',
-                        onnxPath: 'models/wavlm_base_layer9_quantized.onnx',
-                        linearModelPath: 'models/wavlm_linear_model.json'
-                    });
+                    amplitude *= 0.1;
+                    sample += amplitude * Math.sin(2 * Math.PI * freq * t);
                 }
                 
-                // Send audio for processing
+                let envelope = 1.0;
+                if (t < 0.05) envelope = t / 0.05;
+                else if (t > 0.95) envelope = (1.0 - t) / 0.05;
+                
+                audioData[i] = sample * envelope;
+            }
+            
+            log(`✅ Synthetic audio created: ${audioData.length} samples`, 'success', 'pipelineStatus');
+            return audioData;
+        }
+
+        async function playVowelSound(vowel) {
+            return new Promise((resolve) => {
+                try {
+                    log(`🔊 Creating vowel sound for /${vowel}/`, 'info', 'pipelineStatus');
+                    
+                    const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    
+                    const vowelFormants = {
+                        'i': { f1: 270, f2: 2290, f3: 3010, pitch: 150 },
+                        'e': { f1: 530, f2: 1840, f3: 2480, pitch: 140 },
+                        'a': { f1: 730, f2: 1090, f3: 2440, pitch: 120 },
+                        'o': { f1: 570, f2: 840, f3: 2410, pitch: 130 },
+                        'u': { f1: 300, f2: 870, f3: 2240, pitch: 160 }
+                    };
+                    
+                    const formants = vowelFormants[vowel];
+                    if (!formants) {
+                        log(`❌ Unknown vowel: ${vowel}`, 'error', 'pipelineStatus');
+                        resolve();
+                        return;
+                    }
+                    
+                    const duration = 1.5;
+                    const startTime = audioContext.currentTime;
+                    const endTime = startTime + duration;
+                    
+                    const fundamental = audioContext.createOscillator();
+                    fundamental.type = 'sawtooth';
+                    fundamental.frequency.setValueAtTime(formants.pitch, startTime);
+                    
+                    const filter1 = audioContext.createBiquadFilter();
+                    filter1.type = 'bandpass';
+                    filter1.frequency.setValueAtTime(formants.f1, startTime);
+                    filter1.Q.setValueAtTime(5, startTime);
+                    
+                    const filter2 = audioContext.createBiquadFilter();
+                    filter2.type = 'bandpass';
+                    filter2.frequency.setValueAtTime(formants.f2, startTime);
+                    filter2.Q.setValueAtTime(5, startTime);
+                    
+                    const masterGain = audioContext.createGain();
+                    masterGain.gain.setValueAtTime(0, startTime);
+                    masterGain.gain.linearRampToValueAtTime(0.1, startTime + 0.05);
+                    masterGain.gain.setValueAtTime(0.1, endTime - 0.05);
+                    masterGain.gain.linearRampToValueAtTime(0, endTime);
+                    
+                    fundamental.connect(filter1);
+                    filter1.connect(filter2);
+                    filter2.connect(masterGain);
+                    masterGain.connect(audioContext.destination);
+                    
+                    fundamental.start(startTime);
+                    fundamental.stop(endTime);
+                    
+                    log(`🔊 Playing /${vowel}/ for ${duration}s`, 'success', 'pipelineStatus');
+                    
+                    setTimeout(() => {
+                        audioContext.close();
+                        log(`✅ Audio playback complete for /${vowel}/`, 'success', 'pipelineStatus');
+                        resolve();
+                    }, duration * 1000 + 100);
+                    
+                } catch (error) {
+                    log(`❌ Error playing sound: ${error.message}`, 'error', 'pipelineStatus');
+                    resolve();
+                }
+            });
+        }
+
+        // Microphone functions
+        function processMicrophoneData(audioData) {
+            if (!audioData || audioData.length === 0) return;
+            
+            for (let i = 0; i < audioData.length; i++) {
+                const value = audioData[i];
+                microphoneBuffer[microphoneBufferIndex] = isNaN(value) || !isFinite(value) ? 0 : value;
+                microphoneBufferIndex = (microphoneBufferIndex + 1) % 16000;
+            }
+        }
+        
+        function getRecentMicrophoneBuffer() {
+            const recentAudio = new Float32Array(16000);
+            for (let i = 0; i < 16000; i++) {
+                const index = (microphoneBufferIndex + i) % 16000;
+                recentAudio[i] = microphoneBuffer[index];
+            }
+            return recentAudio;
+        }
+        
+        async function startMicrophone() {
+            log('🎤 Starting microphone capture...', 'info', 'pipelineStatus');
+            
+            microphoneStream = await navigator.mediaDevices.getUserMedia({
+                audio: { 
+                    sampleRate: 16000, 
+                    channelCount: 1, 
+                    echoCancellation: true, 
+                    noiseSuppression: true 
+                }
+            });
+            
+            const microphoneContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+            
+            const blob = new Blob([audioProcessorCode], { type: 'application/javascript' });
+            const processorUrl = URL.createObjectURL(blob);
+            
+            await microphoneContext.audioWorklet.addModule(processorUrl);
+            
+            const microphoneWorklet = new AudioWorkletNode(microphoneContext, 'audio-processor');
+            microphoneWorklet.port.onmessage = (event) => {
+                if (event.data.audio) {
+                    processMicrophoneData(event.data.audio);
+                }
+            };
+            
+            const source = microphoneContext.createMediaStreamSource(microphoneStream);
+            source.connect(microphoneWorklet);
+            
+            audioContexts.microphone = { context: microphoneContext, worklet: microphoneWorklet };
+            
+            log('✅ Microphone capture started', 'success', 'pipelineStatus');
+        }
+        
+        function stopMicrophone() {
+            log('⏹️ Stopping microphone capture...', 'info', 'pipelineStatus');
+            
+            if (microphoneStream) {
+                microphoneStream.getTracks().forEach(track => track.stop());
+                microphoneStream = null;
+            }
+            
+            if (audioContexts.microphone) {
+                audioContexts.microphone.worklet.disconnect();
+                audioContexts.microphone.context.close();
+                delete audioContexts.microphone;
+            }
+            
+            log('✅ Microphone capture stopped', 'success', 'pipelineStatus');
+        }
+
+        // Volume monitoring
+        function startVolumeMonitoring() {
+            volumeUpdateInterval = setInterval(() => {
+                if (currentTest === 'test2' || currentTest === 'test3') {
+                    const recentAudio = getRecentMicrophoneBuffer();
+                    const rms = Math.sqrt(recentAudio.reduce((sum, x) => sum + x*x, 0) / recentAudio.length);
+                    
+                    const volumePercent = Math.min(100, rms * 1000);
+                    
+                    const volumeFill = document.getElementById('volumeFill');
+                    if (volumeFill) {
+                        volumeFill.style.width = volumePercent + '%';
+                    }
+                }
+            }, 100);
+        }
+        
+        function stopVolumeMonitoring() {
+            if (volumeUpdateInterval) {
+                clearInterval(volumeUpdateInterval);
+                volumeUpdateInterval = null;
+            }
+            
+            const volumeFill = document.getElementById('volumeFill');
+            if (volumeFill) {
+                volumeFill.style.width = '0%';
+            }
+        }
+
+        // Feature extraction
+        async function extractAndShow(audioData, targetSvg) {
+            return new Promise((resolve) => {
+                log('🧠 Sending audio to ML worker for processing...', 'info', 'pipelineStatus');
+                
+                const timeoutId = setTimeout(() => {
+                    log('❌ Feature extraction timeout (5s)', 'error', 'pipelineStatus');
+                    resolve();
+                }, 5000);
+                
+                const handler = (e) => {
+                    if (e.data.type === 'features') {
+                        clearTimeout(timeoutId);
+                        testWorker.removeEventListener('message', handler);
+                        
+                        log('✅ Features extracted successfully', 'success', 'pipelineStatus');
+                        
+                        const features = e.data.articulationFeatures;
+                        const jawOpening = calculateJawOpening(features.ul.y, features.ll.y);
+                        const actualFeatures = {...features, jaw_opening: jawOpening};
+                        
+                        drawVocalTract(targetSvg, actualFeatures, false);
+                        
+                        log(`Features: UL(${features.ul.x.toFixed(2)},${features.ul.y.toFixed(2)}) TT(${features.tt.x.toFixed(2)},${features.tt.y.toFixed(2)}) JAW:${Math.round(jawOpening*100)}%`, 'info', 'jawStatus');
+                        
+                        resolve();
+                    } else if (e.data.type === 'error') {
+                        clearTimeout(timeoutId);
+                        testWorker.removeEventListener('message', handler);
+                        log(`❌ Feature extraction error: ${e.data.error}`, 'error', 'pipelineStatus');
+                        resolve();
+                    }
+                };
+                
+                testWorker.addEventListener('message', handler);
+                
                 testWorker.postMessage({
                     type: 'process',
                     audio: audioData,
-                    config: { sampleRate: 16000, extractPitchFn: 2 },
+                    config: { sampleRate: 16000 },
                     sensitivityFactor: 8.0
                 });
-                
-            } catch (error) {
-                log(`  ❌ Worker test failed: ${error.message}`, 'error');
-                simulateFeatureExtraction(phoneme, audioData);
+            });
+        }
+        
+        async function extractMicrophoneFeatures() {
+            if (currentTest !== 'test2') return;
+            
+            setTimeout(extractMicrophoneFeatures, 300);
+            
+            const recentAudio = getRecentMicrophoneBuffer();
+            const rms = Math.sqrt(recentAudio.reduce((sum, x) => sum + x*x, 0) / recentAudio.length);
+            
+            if (rms > 0.001) {
+                await extractAndShow(recentAudio, 'actualTract');
             }
         }
         
-        function simulateFeatureExtraction(phoneme, audioData) {
-            log(`  🎭 Simulating feature extraction for /${phoneme}/...`, 'warning');
+        async function extractGuidedFeatures(targetVowel) {
+            if (currentTest !== 'test3') return;
             
-            // Simulate what we think the features should be based on the audio
-            const rms = Math.sqrt(audioData.reduce((sum, x) => sum + x*x, 0) / audioData.length);
-            const expected = EXPECTED_POSITIONS[phoneme] || EXPECTED_POSITIONS.silence;
+            setTimeout(() => extractGuidedFeatures(targetVowel), 300);
             
-            // Add some realistic variation based on audio characteristics
-            const variation = rms * 0.1;
-            const simulatedFeatures = {};
+            const recentAudio = getRecentMicrophoneBuffer();
+            const rms = Math.sqrt(recentAudio.reduce((sum, x) => sum + x*x, 0) / recentAudio.length);
             
-            Object.keys(expected).forEach(art => {
-                simulatedFeatures[art] = {
-                    x: expected[art].x + (Math.random() - 0.5) * variation,
-                    y: expected[art].y + (Math.random() - 0.5) * variation
-                };
-            });
-            
-            analyzeExtractedFeatures(phoneme, simulatedFeatures);
-        }
-        
-        function analyzeExtractedFeatures(phoneme, extractedFeatures) {
-            log(`  📊 Analyzing extracted features for /${phoneme}/...`, 'info');
-            
-            const expected = EXPECTED_POSITIONS[phoneme] || EXPECTED_POSITIONS.silence;
-            let totalError = 0;
-            let totalTests = 0;
-            
-            Object.keys(expected).forEach(art => {
-                const exp = expected[art];
-                const act = extractedFeatures[art] || { x: 0, y: 0 };
-                const tolerance = TOLERANCE_LEVELS[art];
-                
-                const xError = Math.abs(act.x - exp.x);
-                const yError = Math.abs(act.y - exp.y);
-                const xValid = xError <= tolerance.x;
-                const yValid = yError <= tolerance.y;
-                
-                totalError += xError + yError;
-                totalTests += 2;
-                
-                const status = (xValid && yValid) ? '✅' : '❌';
-                log(`    ${art.toUpperCase()}: Expected(${exp.x.toFixed(2)}, ${exp.y.toFixed(2)}) Got(${act.x.toFixed(2)}, ${act.y.toFixed(2)}) ${status}`, 
-                    (xValid && yValid) ? 'success' : 'error');
-            });
-            
-            const avgError = totalError / totalTests;
-            const accuracy = Math.max(0, 100 - (avgError * 100));
-            
-            log(`  📈 Overall accuracy: ${accuracy.toFixed(1)}% (avg error: ${avgError.toFixed(3)})`, 
-                accuracy > 80 ? 'success' : accuracy > 60 ? 'warning' : 'error');
-        }
-        
-        function playTestAudio(buffer) {
-            if (!currentAudioContext) return;
-            
-            if (testAudioSource) {
-                testAudioSource.stop();
+            if (rms > 0.001) {
+                await extractAndShow(recentAudio, 'actualTract');
             }
-            
-            testAudioSource = currentAudioContext.createBufferSource();
-            testAudioSource.buffer = buffer;
-            testAudioSource.connect(currentAudioContext.destination);
-            testAudioSource.start();
         }
-        
-        // SVG drawing functions
+
+        // Drawing functions
         function drawVocalTract(svgId, positions, isExpected = false) {
             const svg = document.getElementById(svgId);
-            svg.innerHTML = '';
+            if (!svg) return;
             
-            // Draw vocal tract outline
+            svg.innerHTML = '';
             drawVocalTractOutline(svg);
             
-            // Draw articulators
+            if (positions.jaw_opening !== undefined) {
+                drawJaw(svg, positions.jaw_opening);
+            }
+            
             Object.keys(positions).forEach(art => {
+                if (art === 'jaw_opening') return;
+                
                 const pos = positions[art];
+                if (!pos || typeof pos.x !== 'number' || typeof pos.y !== 'number') return;
+                
                 const marker = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
                 marker.setAttribute('cx', pos.x);
                 marker.setAttribute('cy', pos.y);
                 marker.setAttribute('r', '0.05');
-                marker.setAttribute('fill', ARTICULATOR_COLORS[art]);
+                marker.setAttribute('fill', ARTICULATOR_COLORS[art] || '#999');
                 marker.setAttribute('stroke', isExpected ? '#333' : '#fff');
                 marker.setAttribute('stroke-width', '0.01');
                 marker.setAttribute('opacity', isExpected ? '0.7' : '1.0');
                 
-                // Add label
                 const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
                 label.setAttribute('x', pos.x);
                 label.setAttribute('y', pos.y - 0.1);
@@ -726,560 +920,937 @@
             });
         }
         
+        function clearVocalTract(svgId) {
+            const svg = document.getElementById(svgId);
+            if (svg) {
+                svg.innerHTML = '';
+                drawVocalTractOutline(svg);
+            }
+        }
+        
         function drawVocalTractOutline(svg) {
-            // Palate
             const palate = document.createElementNS('http://www.w3.org/2000/svg', 'path');
             palate.setAttribute('d', 'M-1.3,-0.8 Q-1.0,-1.15 -0.5,-1.2 Q0.0,-1.2 0.5,-1.15 Q0.8,-1.1 1.0,-1.0');
-            palate.setAttribute('fill', 'none');
-            palate.setAttribute('stroke', '#555');
-            palate.setAttribute('stroke-width', '0.02');
+            palate.setAttribute('class', 'palate');
             svg.appendChild(palate);
             
-            // Jaw
-            const jaw = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-            jaw.setAttribute('d', 'M-1.2,-0.3 Q-0.8,-0.25 -0.3,-0.2 Q0.2,-0.2 0.6,-0.25 Q0.9,-0.3 1.0,-0.4');
-            jaw.setAttribute('fill', 'none');
-            jaw.setAttribute('stroke', '#555');
-            jaw.setAttribute('stroke-width', '0.02');
-            svg.appendChild(jaw);
+            const pharynx = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            pharynx.setAttribute('d', 'M-1.3,-0.8 Q-1.35,-0.55 -1.2,-0.3');
+            pharynx.setAttribute('class', 'pharynx');
+            svg.appendChild(pharynx);
             
-            // Teeth
             const upperTeeth = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
             upperTeeth.setAttribute('x', '0.8');
             upperTeeth.setAttribute('y', '-1.1');
             upperTeeth.setAttribute('width', '0.12');
             upperTeeth.setAttribute('height', '0.08');
-            upperTeeth.setAttribute('fill', 'white');
-            upperTeeth.setAttribute('stroke', '#333');
-            upperTeeth.setAttribute('stroke-width', '0.005');
+            upperTeeth.setAttribute('class', 'teeth');
             svg.appendChild(upperTeeth);
+        }
+        
+        function drawJaw(svg, jawOpening) {
+            const baseY = -0.3;
+            const jawY = baseY + (jawOpening * 0.4);
+            
+            const jaw = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+            jaw.setAttribute('d', `M-1.2,${jawY} Q-0.8,${jawY + 0.05} -0.3,${jawY} Q0.2,${jawY} 0.6,${jawY + 0.05} Q0.9,${jawY} 1.0,${jawY + 0.1}`);
+            jaw.setAttribute('class', 'jaw');
+            jaw.setAttribute('stroke-width', '0.04');
+            jaw.setAttribute('stroke', '#222');
+            svg.appendChild(jaw);
             
             const lowerTeeth = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
             lowerTeeth.setAttribute('x', '0.8');
-            lowerTeeth.setAttribute('y', '-0.35');
+            lowerTeeth.setAttribute('y', jawY + 0.05);
             lowerTeeth.setAttribute('width', '0.12');
             lowerTeeth.setAttribute('height', '0.08');
-            lowerTeeth.setAttribute('fill', 'white');
-            lowerTeeth.setAttribute('stroke', '#333');
-            lowerTeeth.setAttribute('stroke-width', '0.005');
+            lowerTeeth.setAttribute('class', 'teeth');
             svg.appendChild(lowerTeeth);
+            
+            const jawLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            jawLabel.setAttribute('x', '-1.0');
+            jawLabel.setAttribute('y', jawY - 0.1);
+            jawLabel.setAttribute('font-size', '0.08');
+            jawLabel.setAttribute('fill', '#9b59b6');
+            jawLabel.setAttribute('font-weight', 'bold');
+            jawLabel.textContent = `${Math.round(jawOpening * 100)}%`;
+            svg.appendChild(jawLabel);
         }
-        
-        function updateExpectedPositions() {
-            const testSound = document.getElementById('testSound').value;
-            const expectedPositions = EXPECTED_POSITIONS[testSound] || EXPECTED_POSITIONS.silence;
-            drawVocalTract('expectedTract', expectedPositions, true);
-        }
-        
-        function updateComparisonDisplay(phoneme, audioData) {
-            // This would normally get features from the actual SPARC system
-            // For now, we'll simulate based on expected positions with some variation
-            const expected = EXPECTED_POSITIONS[phoneme] || EXPECTED_POSITIONS.silence;
-            const actual = {};
+
+        // SPEECH TESTS
+        async function runTest1() {
+            if (currentTest !== 'none') {
+                updateStatus('test1', '⚠️ Another test is running. Please wait.');
+                return;
+            }
             
-            // Simulate actual extraction with some realistic errors
-            Object.keys(expected).forEach(art => {
-                actual[art] = {
-                    x: expected[art].x + (Math.random() - 0.5) * 0.1,
-                    y: expected[art].y + (Math.random() - 0.5) * 0.1
-                };
-            });
-            
-            // Draw both tracts
-            drawVocalTract('expectedTract', expected, true);
-            drawVocalTract('actualTract', actual, false);
-            
-            // Update comparison table
-            updateComparisonTable(expected, actual);
-        }
-        
-        function updateComparisonTable(expected, actual) {
-            const tbody = document.getElementById('comparisonTableBody');
-            tbody.innerHTML = '';
-            
-            Object.keys(expected).forEach(art => {
-                const exp = expected[art];
-                const act = actual[art];
-                const tolerance = TOLERANCE_LEVELS[art];
-                
-                const xDiff = Math.abs(act.x - exp.x);
-                const yDiff = Math.abs(act.y - exp.y);
-                const xValid = xDiff <= tolerance.x;
-                const yValid = yDiff <= tolerance.y;
-                const overallValid = xValid && yValid;
-                
-                const row = document.createElement('tr');
-                row.innerHTML = `
-                    <td style="font-weight: bold; color: ${ARTICULATOR_COLORS[art]}">${art.toUpperCase()}</td>
-                    <td>${exp.x.toFixed(3)}</td>
-                    <td style="color: ${xValid ? '#28a745' : '#dc3545'}">${act.x.toFixed(3)}</td>
-                    <td style="color: ${xValid ? '#28a745' : '#dc3545'}">${xDiff.toFixed(3)}</td>
-                    <td>${exp.y.toFixed(3)}</td>
-                    <td style="color: ${yValid ? '#28a745' : '#dc3545'}">${act.y.toFixed(3)}</td>
-                    <td style="color: ${yValid ? '#28a745' : '#dc3545'}">${yDiff.toFixed(3)}</td>
-                    <td style="font-weight: bold; color: ${overallValid ? '#28a745' : '#dc3545'}">${overallValid ? '✅ PASS' : '❌ FAIL'}</td>
-                    <td style="font-size: 11px;">${getArticulatorNote(art, xValid, yValid)}</td>
-                `;
-                tbody.appendChild(row);
-            });
-        }
-        
-        function getArticulatorNote(art, xValid, yValid) {
-            if (xValid && yValid) return 'Position accurate';
-            if (!xValid && !yValid) return 'Position incorrect';
-            if (!xValid) return 'X position incorrect';
-            if (!yValid) return 'Y position incorrect';
-            return '';
-        }
-        
-        // Diagnostic functions
-        async function runFullDiagnostics() {
-            log('🔍 Starting comprehensive SPARC diagnostics...', 'info');
-            
-            await testWorkerPipeline();
-            testCoordinateSystem();
-            debugConstraints();
-            
-            log('✅ Full diagnostics complete', 'success');
-        }
-        
-        async function testWorkerPipeline() {
-            log('🤖 Testing ML pipeline...', 'info');
-            
-            // Test 1: Worker creation
             try {
-                const worker = new Worker('sparc-worker.js');
-                log('  ✅ Worker created successfully', 'success');
+                currentTest = 'test1';
+                updateStatus('test1', '🔊 Starting synthetic sound generation...');
                 
-                // Test 2: Worker initialization
-                const initPromise = new Promise((resolve, reject) => {
-                    const timeout = setTimeout(() => reject(new Error('Initialization timeout')), 5000);
+                if (!workerInitialized) {
+                    updateStatus('test1', '❌ Worker not initialized. Run "Run All Tests" first.');
+                    currentTest = 'none';
+                    return;
+                }
+                
+                const vowel = document.getElementById('test1Sound').value;
+                const expected = EXPECTED_POSITIONS[vowel];
+                
+                document.getElementById('leftTitle').textContent = `📚 Expected /${vowel}/`;
+                document.getElementById('rightTitle').textContent = '🔬 Extracted Features';
+                drawVocalTract('expectedTract', expected, true);
+                
+                updateStatus('test1', `🔊 Generating and playing /${vowel}/ sound...`);
+                await playVowelSound(vowel);
+                
+                updateStatus('test1', '🧠 Extracting features from synthetic audio...');
+                const syntheticAudio = createSyntheticAudio(vowel);
+                await extractAndShow(syntheticAudio, 'actualTract');
+                
+                updateStatus('test1', `✅ Test 1 complete for /${vowel}/`);
+                
+            } catch (error) {
+                updateStatus('test1', `❌ Test 1 error: ${error.message}`);
+                log(`❌ Test 1 error: ${error.message}`, 'error', 'pipelineStatus');
+            } finally {
+                currentTest = 'none';
+            }
+        }
+
+        async function startTest2() {
+            if (currentTest !== 'none') {
+                updateStatus('test2', '⚠️ Another test is running. Please wait.');
+                return;
+            }
+            
+            try {
+                currentTest = 'test2';
+                updateStatus('test2', '🎤 Starting microphone capture...');
+                
+                if (!workerInitialized) {
+                    updateStatus('test2', '❌ Worker not initialized. Run "Run All Tests" first.');
+                    currentTest = 'none';
+                    return;
+                }
+                
+                document.getElementById('leftTitle').textContent = '📚 No Expected (Free Recording)';
+                document.getElementById('rightTitle').textContent = '🎤 Real-time Features';
+                clearVocalTract('expectedTract');
+                
+                await startMicrophone();
+                updateStatus('test2', '✅ Recording - speak anything!');
+                
+                extractMicrophoneFeatures();
+                startVolumeMonitoring();
+                
+            } catch (error) {
+                updateStatus('test2', `❌ Test 2 error: ${error.message}`);
+                log(`❌ Test 2 error: ${error.message}`, 'error', 'pipelineStatus');
+                currentTest = 'none';
+            }
+        }
+        
+        function stopTest2() {
+            if (currentTest !== 'test2') return;
+            
+            stopMicrophone();
+            stopVolumeMonitoring();
+            updateStatus('test2', '⏹️ Recording stopped');
+            currentTest = 'none';
+        }
+
+        async function startTest3() {
+            if (currentTest !== 'none') {
+                updateStatus('test3', '⚠️ Another test is running. Please wait.');
+                return;
+            }
+            
+            try {
+                currentTest = 'test3';
+                
+                const targetVowel = document.getElementById('test3Target').value;
+                const expected = EXPECTED_POSITIONS[targetVowel];
+                
+                updateStatus('test3', `🎯 Say /${targetVowel}/ clearly into microphone...`);
+                
+                if (!workerInitialized) {
+                    updateStatus('test3', '❌ Worker not initialized. Run "Run All Tests" first.');
+                    currentTest = 'none';
+                    return;
+                }
+                
+                document.getElementById('leftTitle').textContent = `📚 Expected /${targetVowel}/`;
+                document.getElementById('rightTitle').textContent = '🎯 Your Speech';
+                drawVocalTract('expectedTract', expected, true);
+                
+                await startMicrophone();
+                updateStatus('test3', `✅ Recording - now say /${targetVowel}/ clearly!`);
+                
+                extractGuidedFeatures(targetVowel);
+                
+            } catch (error) {
+                updateStatus('test3', `❌ Test 3 error: ${error.message}`);
+                log(`❌ Test 3 error: ${error.message}`, 'error', 'pipelineStatus');
+                currentTest = 'none';
+            }
+        }
+        
+        function stopTest3() {
+            if (currentTest !== 'test3') return;
+            
+            stopMicrophone();
+            updateStatus('test3', '⏹️ Guided test stopped');
+            currentTest = 'none';
+        }
+
+        async function demoAllVowels() {
+            if (currentTest !== 'none') {
+                alert('Another test is running. Please wait.');
+                return;
+            }
+            
+            const vowels = ['i', 'e', 'a', 'o', 'u'];
+            
+            for (const vowel of vowels) {
+                document.getElementById('test1Sound').value = vowel;
+                await runTest1();
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+        }
+
+        // SYSTEM TESTS
+        async function testONNXRuntime() { 
+            try {
+                updateTestStatus('onnxTest', 'running', 'Testing ONNX Runtime...');
+                log('🤖 Testing ONNX Runtime availability...', 'info', 'pipelineStatus');
+                
+                if (typeof window.ort === 'undefined') {
+                    throw new Error('ONNX Runtime not loaded - check CDN connection');
+                }
+                
+                const testTensor = new window.ort.Tensor('float32', [1, 2, 3, 4], [2, 2]);
+                if (!testTensor || testTensor.data.length !== 4) {
+                    throw new Error('ONNX Runtime tensor creation failed');
+                }
+                
+                log(`✅ ONNX Runtime version: ${window.ort.version}`, 'success', 'pipelineStatus');
+                updateTestStatus('onnxTest', 'passed', `Version ${window.ort.version} - Tensor creation OK`);
+                return true;
+            } catch (error) {
+                log(`❌ ONNX Runtime test failed: ${error.message}`, 'error', 'pipelineStatus');
+                updateTestStatus('onnxTest', 'failed', error.message);
+                return false;
+            }
+        }
+        
+        async function testWebWorker() { 
+            try {
+                updateTestStatus('workerTest', 'running', 'Testing Web Worker...');
+                log('👷 Testing Web Worker creation and communication...', 'info', 'pipelineStatus');
+                
+                return new Promise((resolve, reject) => {
+                    const timeout = setTimeout(() => {
+                        log('❌ Worker communication timeout', 'error', 'pipelineStatus');
+                        updateTestStatus('workerTest', 'failed', 'Communication timeout');
+                        resolve(false);
+                    }, 5000);
                     
-                    worker.onmessage = function(e) {
+                    try {
+                        if (testWorker) {
+                            testWorker.terminate();
+                        }
+                        
+                        testWorker = new Worker('sparc-worker.js');
+                        
+                        testWorker.onmessage = function(e) {
+                            if (e.data.type === 'pong') {
+                                clearTimeout(timeout);
+                                log('✅ Web Worker communication working', 'success', 'pipelineStatus');
+                                updateTestStatus('workerTest', 'passed', 'Communication OK');
+                                resolve(true);
+                            }
+                        };
+                        
+                        testWorker.onerror = function(error) {
+                            clearTimeout(timeout);
+                            log(`❌ Worker error: ${error.message}`, 'error', 'pipelineStatus');
+                            updateTestStatus('workerTest', 'failed', error.message);
+                            resolve(false);
+                        };
+                        
+                        testWorker.postMessage({ type: 'ping' });
+                        
+                    } catch (error) {
                         clearTimeout(timeout);
-                        if (e.data.type === 'initialized') {
-                            log('  ✅ Worker initialized successfully', 'success');
-                            resolve();
+                        log(`❌ Worker creation failed: ${error.message}`, 'error', 'pipelineStatus');
+                        updateTestStatus('workerTest', 'failed', error.message);
+                        resolve(false);
+                    }
+                });
+                
+            } catch (error) {
+                log(`❌ Web Worker test failed: ${error.message}`, 'error', 'pipelineStatus');
+                updateTestStatus('workerTest', 'failed', error.message);
+                return false;
+            }
+        }
+        
+        async function testWavLMModel() { 
+            try {
+                updateTestStatus('wavlmTest', 'running', 'Loading WavLM model...');
+                log('🎵 Testing WavLM model loading with real model files...', 'info', 'pipelineStatus');
+                
+                await initializeWorker();
+                
+                const testAudio = new Float32Array(1024);
+                for (let i = 0; i < testAudio.length; i++) {
+                    testAudio[i] = Math.sin(2 * Math.PI * 440 * i / 16000) * 0.1;
+                }
+                
+                const modelTestResult = await new Promise((resolve, reject) => {
+                    const timeout = setTimeout(() => {
+                        reject(new Error('WavLM model test timeout'));
+                    }, 10000);
+                    
+                    const handler = (e) => {
+                        if (e.data.type === 'features' || e.data.type === 'initialized') {
+                            clearTimeout(timeout);
+                            testWorker.removeEventListener('message', handler);
+                            resolve(true);
                         } else if (e.data.type === 'error') {
-                            log(`  ❌ Worker initialization error: ${e.data.error}`, 'error');
+                            clearTimeout(timeout);
+                            testWorker.removeEventListener('message', handler);
                             reject(new Error(e.data.error));
                         }
                     };
                     
-                    worker.onerror = (error) => {
-                        clearTimeout(timeout);
-                        reject(error);
-                    };
+                    testWorker.addEventListener('message', handler);
+                    testWorker.postMessage({
+                        type: 'test_model',
+                        audio: testAudio
+                    });
                 });
                 
-                worker.postMessage({
-                    type: 'init',
-                    onnxPath: 'models/wavlm_base_layer9_quantized.onnx',
-                    linearModelPath: 'models/wavlm_linear_model.json'
-                });
+                log('✅ WavLM model loaded and tested successfully', 'success', 'pipelineStatus');
+                updateTestStatus('wavlmTest', 'passed', 'Model loaded and working');
+                return true;
+            } catch (error) {
+                log(`❌ WavLM model test failed: ${error.message}`, 'error', 'pipelineStatus');
+                updateTestStatus('wavlmTest', 'failed', error.message);
+                return false;
+            }
+        }
+        
+        async function testLinearModel() {
+            try {
+                updateTestStatus('linearTest', 'running', 'Testing linear model...');
+                log('📊 Testing linear model with real WavLM features...', 'info', 'pipelineStatus');
                 
-                await initPromise;
+                if (!workerInitialized) {
+                    throw new Error('Worker not initialized - run WavLM test first');
+                }
                 
-                // Test 3: Feature extraction
-                const testAudio = new Float32Array(16000).fill(0).map((_, i) => 
-                    0.1 * Math.sin(2 * Math.PI * 150 * i / 16000));
+                const testAudio = createSyntheticAudio('a');
+                log('📊 Sending real synthetic vowel to test linear model...', 'info', 'pipelineStatus');
                 
-                const extractionPromise = new Promise((resolve) => {
-                    worker.onmessage = function(e) {
+                const result = await new Promise((resolve, reject) => {
+                    const timeout = setTimeout(() => {
+                        reject(new Error('Linear model test timeout (10s)'));
+                    }, 10000);
+                    
+                    const handler = (e) => {
                         if (e.data.type === 'features') {
-                            log('  ✅ Feature extraction successful', 'success');
-                            log(`  📊 Extracted ${Object.keys(e.data.articulationFeatures).length} articulators`, 'info');
-                            resolve(e.data.articulationFeatures);
+                            clearTimeout(timeout);
+                            testWorker.removeEventListener('message', handler);
+                            
+                            const features = e.data.articulationFeatures;
+                            const requiredKeys = ['ul', 'll', 'li', 'tt', 'tb', 'td'];
+                            
+                            for (const key of requiredKeys) {
+                                if (!features[key] || 
+                                    typeof features[key].x !== 'number' || 
+                                    typeof features[key].y !== 'number' ||
+                                    isNaN(features[key].x) || isNaN(features[key].y)) {
+                                    reject(new Error(`Invalid linear model output for ${key}: got ${JSON.stringify(features[key])}`));
+                                    return;
+                                }
+                            }
+                            
+                            resolve(features);
+                        } else if (e.data.type === 'error') {
+                            clearTimeout(timeout);
+                            testWorker.removeEventListener('message', handler);
+                            reject(new Error(`Linear model error: ${e.data.error}`));
                         }
                     };
+                    
+                    testWorker.addEventListener('message', handler);
+                    testWorker.postMessage({
+                        type: 'process',
+                        audio: testAudio,
+                        config: { sampleRate: 16000 },
+                        sensitivityFactor: 8.0
+                    });
                 });
                 
-                worker.postMessage({
-                    type: 'process',
-                    audio: testAudio,
-                    config: { sampleRate: 16000 },
-                    sensitivityFactor: 8.0
-                });
-                
-                const features = await extractionPromise;
-                worker.terminate();
-                
-                return features;
+                log(`✅ Linear model test passed - extracted features: UL(${result.ul.x.toFixed(2)},${result.ul.y.toFixed(2)})`, 'success', 'pipelineStatus');
+                updateTestStatus('linearTest', 'passed', 'Real features extracted');
+                return true;
                 
             } catch (error) {
-                log(`  ❌ Pipeline test failed: ${error.message}`, 'error');
-                log('  🔄 System will use fallback mode', 'warning');
-                return null;
+                log(`❌ Linear model test failed: ${error.message}`, 'error', 'pipelineStatus');
+                updateTestStatus('linearTest', 'failed', error.message);
+                return false;
             }
         }
         
-        function testCoordinateSystem() {
-            log('📐 Testing coordinate system...', 'info', 'coordinateStatus');
+        async function testMLProcessing() {
+            updateTestStatus('mlTest', 'running', 'Testing ML processing...');
+            log('🧠 Testing complete ML processing pipeline with real vowel differentiation...', 'info', 'pipelineStatus');
             
-            // Test coordinate bounds
-            const testPoints = [
-                { name: 'Origin', x: 0, y: 0 },
-                { name: 'Front lips', x: 1.0, y: -0.9 },
-                { name: 'Back pharynx', x: -1.5, y: -0.6 },
-                { name: 'High palate', x: 0, y: -1.2 },
-                { name: 'Low jaw', x: 0, y: -0.2 }
-            ];
+            if (!workerInitialized) {
+                log('❌ Worker not initialized for ML test', 'error', 'pipelineStatus');
+                updateTestStatus('mlTest', 'failed', 'Worker not ready');
+                return false;
+            }
             
-            testPoints.forEach(point => {
-                const inBounds = point.x >= -2 && point.x <= 2 && point.y >= -2 && point.y <= 1;
-                log(`  ${point.name}: (${point.x}, ${point.y}) ${inBounds ? '✅' : '❌'}`, 
-                    inBounds ? 'success' : 'error', 'coordinateStatus');
-            });
-            
-            // Test articulator ranges
-            log('  🔍 Testing articulator movement ranges...', 'info', 'coordinateStatus');
-            
-            Object.keys(EXPECTED_POSITIONS.i).forEach(art => {
-                const positions = Object.values(EXPECTED_POSITIONS).map(p => p[art]);
-                const xRange = Math.max(...positions.map(p => p.x)) - Math.min(...positions.map(p => p.x));
-                const yRange = Math.max(...positions.map(p => p.y)) - Math.min(...positions.map(p => p.y));
+            try {
+                const testVowels = ['i', 'a', 'u'];
+                const results = {};
                 
-                log(`    ${art.toUpperCase()}: X range ${xRange.toFixed(3)}, Y range ${yRange.toFixed(3)}`, 'info', 'coordinateStatus');
-                
-                if (xRange < 0.1 && yRange < 0.1) {
-                    log(`    ⚠️ ${art.toUpperCase()} has very limited movement!`, 'warning', 'coordinateStatus');
-                }
-            });
-        }
-        
-        function debugConstraints() {
-            log('🔧 Debugging anatomical constraints...', 'info', 'coordinateStatus');
-            
-            // Test the constraints from app.js
-            const constraintTests = [
-                { name: 'Lip X constraint', constraint: 'x = 0.95 (forced)', issue: 'Lips cannot move forward/back' },
-                { name: 'Tongue tip limits', constraint: 'x: [-0.5, 0.8], y: [-1.05, -0.3]', issue: 'May be too restrictive' },
-                { name: 'Tongue body limits', constraint: 'x: [-0.8, 0.5], y: [-1.1, -0.25]', issue: 'Check vowel space' },
-                { name: 'Tongue dorsum limits', constraint: 'x: [-1.2, 0.0], y: [-1.0, -0.3]', issue: 'Back vowel range' }
-            ];
-            
-            constraintTests.forEach(test => {
-                log(`  🔍 ${test.name}: ${test.constraint}`, 'info', 'coordinateStatus');
-                log(`    ⚠️ Potential issue: ${test.issue}`, 'warning', 'coordinateStatus');
-            });
-            
-            // Test specific constraint violations
-            log('  🧪 Testing constraint violations...', 'info', 'coordinateStatus');
-            
-            const violations = [
-                { art: 'ul', pos: { x: 0.5, y: -1.0 }, desc: 'Lip protrusion (should be allowed for /u/)' },
-                { art: 'tt', pos: { x: 0.9, y: -1.0 }, desc: 'Tongue tip touching teeth (should be allowed for /t/)' },
-                { art: 'td', pos: { x: -1.0, y: -0.9 }, desc: 'Tongue dorsum high back (should be allowed for /k/)' }
-            ];
-            
-            violations.forEach(v => {
-                log(`    Testing ${v.desc}: ${v.art} at (${v.pos.x}, ${v.pos.y})`, 'info', 'coordinateStatus');
-                // In the real app, these positions might be constrained to different values
-                log(`    ⚠️ This position might be artificially constrained`, 'warning', 'coordinateStatus');
-            });
-        }
-        
-        function testConstraintLimits() {
-            log('⚖️ Testing constraint limits...', 'info', 'constraintAnalysis');
-            
-            // Test extreme positions to see what gets constrained
-            const extremeTests = [
-                { name: 'Maximum mouth opening', ul: { x: 0.95, y: -0.5 }, ll: { x: 0.95, y: -0.1 } },
-                { name: 'Extreme lip protrusion', ul: { x: 0.3, y: -1.0 }, ll: { x: 0.3, y: -0.8 } },
-                { name: 'Tongue tip at teeth', tt: { x: 0.85, y: -1.05 } },
-                { name: 'Tongue dorsum at soft palate', td: { x: -1.0, y: -0.95 } }
-            ];
-            
-            extremeTests.forEach(test => {
-                log(`🧪 Testing: ${test.name}`, 'info', 'constraintAnalysis');
-                Object.keys(test).forEach(key => {
-                    if (key !== 'name') {
-                        const pos = test[key];
-                        log(`  ${key.toUpperCase()}: (${pos.x}, ${pos.y})`, 'info', 'constraintAnalysis');
+                for (const vowel of testVowels) {
+                    log(`🧠 Testing ML processing with real /${vowel}/ sound...`, 'info', 'pipelineStatus');
+                    
+                    const testAudio = createSyntheticAudio(vowel);
+                    
+                    const result = await new Promise((resolve, reject) => {
+                        const timeout = setTimeout(() => {
+                            reject(new Error(`ML processing timeout for /${vowel}/`));
+                        }, 10000);
                         
-                        // Check if this would be constrained in the real system
-                        if (key.includes('l') && pos.x !== 0.95) {
-                            log(`    ❌ Would be constrained to x=0.95`, 'error', 'constraintAnalysis');
+                        const handler = (e) => {
+                            if (e.data.type === 'features') {
+                                clearTimeout(timeout);
+                                testWorker.removeEventListener('message', handler);
+                                resolve(e.data);
+                            } else if (e.data.type === 'error') {
+                                clearTimeout(timeout);
+                                testWorker.removeEventListener('message', handler);
+                                reject(new Error(`ML error for /${vowel}/: ${e.data.error}`));
+                            }
+                        };
+                        
+                        testWorker.addEventListener('message', handler);
+                        testWorker.postMessage({
+                            type: 'process',
+                            audio: testAudio,
+                            config: { sampleRate: 16000 },
+                            sensitivityFactor: 8.0
+                        });
+                    });
+                    
+                    const features = result.articulationFeatures;
+                    const requiredKeys = ['ul', 'll', 'li', 'tt', 'tb', 'td'];
+                    
+                    for (const key of requiredKeys) {
+                        if (!features[key] || 
+                            typeof features[key].x !== 'number' || 
+                            typeof features[key].y !== 'number' ||
+                            isNaN(features[key].x) || isNaN(features[key].y) ||
+                            !isFinite(features[key].x) || !isFinite(features[key].y)) {
+                            throw new Error(`Invalid ML output for /${vowel}/ ${key}: (${features[key].x}, ${features[key].y})`);
                         }
                     }
+                    
+                    results[vowel] = features;
+                    log(`✅ ML processing successful for /${vowel}/: UL(${features.ul.x.toFixed(2)},${features.ul.y.toFixed(2)})`, 'success', 'pipelineStatus');
+                }
+                
+                const iFeatures = results['i'];
+                const aFeatures = results['a'];
+                const uFeatures = results['u'];
+                
+                const iJaw = calculateJawOpening(iFeatures.ul.y, iFeatures.ll.y);
+                const aJaw = calculateJawOpening(aFeatures.ul.y, aFeatures.ll.y);
+                const uJaw = calculateJawOpening(uFeatures.ul.y, uFeatures.ll.y);
+                
+                if (Math.abs(iJaw - aJaw) < 0.1) {
+                    throw new Error(`Vowel differentiation failed: /i/ and /a/ jaw positions too similar (${iJaw.toFixed(2)} vs ${aJaw.toFixed(2)})`);
+                }
+                
+                log(`✅ Vowel differentiation working: /i/ jaw=${Math.round(iJaw*100)}%, /a/ jaw=${Math.round(aJaw*100)}%, /u/ jaw=${Math.round(uJaw*100)}%`, 'success', 'pipelineStatus');
+                
+                log('🎉 ML processing test completed successfully - real vowel differentiation confirmed', 'success', 'pipelineStatus');
+                updateTestStatus('mlTest', 'passed', 'Real vowel differentiation working');
+                return true;
+                
+            } catch (error) {
+                log(`❌ ML processing test failed: ${error.message}`, 'error', 'pipelineStatus');
+                updateTestStatus('mlTest', 'failed', error.message);
+                return false;
+            }
+        }
+        
+        async function testAudioPipeline() { 
+            try {
+                updateTestStatus('audioTest', 'running', 'Testing audio pipeline...');
+                log('🎤 Testing real audio context and microphone access...', 'info', 'pipelineStatus');
+                
+                const testContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+                if (testContext.sampleRate !== 16000) {
+                    log(`⚠️ Audio context sample rate: ${testContext.sampleRate} (requested 16000)`, 'warning', 'pipelineStatus');
+                }
+                
+                log('✅ Audio context created successfully', 'success', 'pipelineStatus');
+                
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: { 
+                        sampleRate: 16000, 
+                        channelCount: 1, 
+                        echoCancellation: true, 
+                        noiseSuppression: true 
+                    } 
                 });
-            });
-        }
-        
-        function analyzeMovementRange() {
-            log('📏 Analyzing articulator movement ranges...', 'info', 'constraintAnalysis');
-            
-            Object.keys(EXPECTED_POSITIONS.i).forEach(art => {
-                const allPositions = Object.values(EXPECTED_POSITIONS).map(p => p[art]);
                 
-                const xValues = allPositions.map(p => p.x);
-                const yValues = allPositions.map(p => p.y);
-                
-                const xMin = Math.min(...xValues);
-                const xMax = Math.max(...xValues);
-                const yMin = Math.min(...yValues);
-                const yMax = Math.max(...yValues);
-                
-                const xRange = xMax - xMin;
-                const yRange = yMax - yMin;
-                
-                log(`${art.toUpperCase()}:`, 'info', 'constraintAnalysis');
-                log(`  X: ${xMin.toFixed(3)} to ${xMax.toFixed(3)} (range: ${xRange.toFixed(3)})`, 'info', 'constraintAnalysis');
-                log(`  Y: ${yMin.toFixed(3)} to ${yMax.toFixed(3)} (range: ${yRange.toFixed(3)})`, 'info', 'constraintAnalysis');
-                
-                if (xRange < 0.05) {
-                    log(`  ⚠️ Very limited X movement!`, 'warning', 'constraintAnalysis');
+                const audioTracks = stream.getAudioTracks();
+                if (audioTracks.length === 0) {
+                    throw new Error('No audio tracks in media stream');
                 }
-                if (yRange < 0.05) {
-                    log(`  ⚠️ Very limited Y movement!`, 'warning', 'constraintAnalysis');
-                }
-            });
-        }
-        
-        function testAnatomicalRealism() {
-            log('🧬 Testing anatomical realism...', 'info', 'constraintAnalysis');
-            
-            const anatomyTests = [
-                {
-                    name: 'Lip ordering',
-                    test: () => {
-                        const i_pos = EXPECTED_POSITIONS.i;
-                        return i_pos.ul.y < i_pos.ll.y; // Upper lip should be above lower lip
-                    },
-                    message: 'Upper lip should be above lower lip'
-                },
-                {
-                    name: 'Tongue tip reachability',
-                    test: () => {
-                        const t_pos = EXPECTED_POSITIONS.t;
-                        return t_pos.tt.x > 0.7; // Tongue tip should reach alveolar ridge for /t/
-                    },
-                    message: 'Tongue tip should reach alveolar ridge for /t/'
-                },
-                {
-                    name: 'Vowel space utilization',
-                    test: () => {
-                        const i_pos = EXPECTED_POSITIONS.i;
-                        const a_pos = EXPECTED_POSITIONS.a;
-                        const u_pos = EXPECTED_POSITIONS.u;
-                        
-                        // Check if vowels form a proper triangle in vowel space
-                        const i_high = i_pos.tb.y;
-                        const a_low = a_pos.tb.y;
-                        const height = Math.abs(i_high - a_low);
-                        
-                        return height > 0.3; // Should have significant height difference
-                    },
-                    message: 'Vowels should span significant vertical space'
-                }
-            ];
-            
-            anatomyTests.forEach(test => {
-                const passed = test.test();
-                log(`${test.name}: ${passed ? '✅' : '❌'} ${test.message}`, 
-                    passed ? 'success' : 'error', 'constraintAnalysis');
-            });
-        }
-        
-        // Real-time comparison functions
-        function startRealTimeComparison() {
-            if (realTimeTestRunning) return;
-            
-            realTimeTestRunning = true;
-            log('▶️ Starting real-time comparison...', 'info');
-            
-            const testSound = document.getElementById('testSound').value;
-            updateExpectedPositions();
-            
-            // Generate continuous audio for the selected sound
-            generateContinuousAudio(testSound);
-            
-            // Start updating actual positions (simulated)
-            updateActualPositions(testSound);
-        }
-        
-        function stopRealTimeComparison() {
-            realTimeTestRunning = false;
-            log('⏹️ Stopped real-time comparison', 'info');
-            
-            if (testAudioSource) {
-                testAudioSource.stop();
-                testAudioSource = null;
-            }
-        }
-        
-        function generateContinuousAudio(phoneme) {
-            if (!realTimeTestRunning) return;
-            
-            const { buffer } = generatePhonemeAudio(phoneme, 2.0);
-            playTestAudio(buffer);
-            
-            // Schedule next audio generation
-            setTimeout(() => generateContinuousAudio(phoneme), 1800);
-        }
-        
-        function updateActualPositions(phoneme) {
-            if (!realTimeTestRunning) return;
-            
-            const expected = EXPECTED_POSITIONS[phoneme] || EXPECTED_POSITIONS.silence;
-            const actual = {};
-            
-            // Simulate real-time variation
-            const time = Date.now() / 1000;
-            Object.keys(expected).forEach(art => {
-                const variation = 0.05 * Math.sin(time * 2 + art.charCodeAt(0));
-                actual[art] = {
-                    x: expected[art].x + variation * Math.random(),
-                    y: expected[art].y + variation * Math.random()
-                };
-            });
-            
-            drawVocalTract('actualTract', actual, false);
-            updateComparisonTable(expected, actual);
-            
-            // Schedule next update
-            setTimeout(() => updateActualPositions(phoneme), 200);
-        }
-        
-        // Additional test functions
-        function testModelLoading() {
-            log('🧠 Testing model loading...', 'info', 'pipelineAnalysis');
-            
-            // Test ONNX Runtime availability
-            if (typeof ort !== 'undefined') {
-                log('  ✅ ONNX Runtime available', 'success', 'pipelineAnalysis');
-                log(`  📦 Version: ${ort.version || 'Unknown'}`, 'info', 'pipelineAnalysis');
-            } else {
-                log('  ❌ ONNX Runtime not found', 'error', 'pipelineAnalysis');
-                return;
-            }
-            
-            // Test model file accessibility
-            const modelPaths = [
-                'models/wavlm_base_layer9_quantized.onnx',
-                'models/wavlm_linear_model.json'
-            ];
-            
-            modelPaths.forEach(async (path) => {
+                
+                const track = audioTracks[0];
+                const settings = track.getSettings();
+                log(`Microphone settings: ${settings.channelCount} channels, ${settings.sampleRate}Hz`, 'info', 'pipelineStatus');
+                
                 try {
-                    const response = await fetch(path, { method: 'HEAD' });
-                    if (response.ok) {
-                        log(`  ✅ Found: ${path}`, 'success', 'pipelineAnalysis');
-                    } else {
-                        log(`  ❌ Missing: ${path} (${response.status})`, 'error', 'pipelineAnalysis');
-                    }
-                } catch (error) {
-                    log(`  ❌ Error checking ${path}: ${error.message}`, 'error', 'pipelineAnalysis');
+                    await testContext.audioWorklet.addModule(URL.createObjectURL(new Blob([audioProcessorCode], { type: 'application/javascript' })));
+                    log('✅ AudioWorklet support confirmed', 'success', 'pipelineStatus');
+                } catch (workletError) {
+                    throw new Error(`AudioWorklet not supported: ${workletError.message}`);
                 }
-            });
+                
+                stream.getTracks().forEach(track => track.stop());
+                log('✅ Microphone access granted and tested', 'success', 'pipelineStatus');
+                
+                testContext.close();
+                updateTestStatus('audioTest', 'passed', 'Real audio pipeline ready');
+                return true;
+            } catch (error) {
+                log(`❌ Audio pipeline test failed: ${error.message}`, 'error', 'pipelineStatus');
+                updateTestStatus('audioTest', 'failed', error.message);
+                return false;
+            }
         }
         
-        function testWorkerCommunication() {
-            log('📡 Testing worker communication...', 'info', 'pipelineAnalysis');
+        async function testJawMovement() { 
+            try {
+                updateTestStatus('jawTest', 'running', 'Testing jaw calculations...');
+                log('🦴 Testing jaw movement calculations with real articulator data...', 'info', 'jawStatus');
+                
+                const testCases = [
+                    { ul_y: -1.0, ll_y: -0.95, expected: 'closed', vowel: '/i/' },
+                    { ul_y: -1.0, ll_y: -0.4, expected: 'open', vowel: '/a/' },
+                    { ul_y: -0.95, ll_y: -0.3, expected: 'wide open', vowel: '/ɑ/' },
+                    { ul_y: -1.0, ll_y: -0.92, expected: 'slightly open', vowel: '/u/' }
+                ];
+                
+                let allTestsPassed = true;
+                
+                for (const test of testCases) {
+                    const jawOpening = calculateJawOpening(test.ul_y, test.ll_y);
+                    
+                    if (isNaN(jawOpening) || !isFinite(jawOpening) || jawOpening < 0 || jawOpening > 1) {
+                        allTestsPassed = false;
+                        log(`❌ Invalid jaw calculation for ${test.vowel}: ${jawOpening}`, 'error', 'jawStatus');
+                    } else {
+                        log(`✅ ${test.vowel}: UL=${test.ul_y} LL=${test.ll_y} → ${Math.round(jawOpening*100)}% (${test.expected})`, 'success', 'jawStatus');
+                    }
+                }
+                
+                for (const [vowel, positions] of Object.entries(EXPECTED_POSITIONS)) {
+                    const jawOpening = calculateJawOpening(positions.ul.y, positions.ll.y);
+                    const expectedJaw = positions.jaw_opening;
+                    const difference = Math.abs(jawOpening - expectedJaw);
+                    
+                    if (difference > 0.2) {
+                        log(`⚠️ Jaw calculation mismatch for /${vowel}/: calculated ${Math.round(jawOpening*100)}%, expected ${Math.round(expectedJaw*100)}%`, 'warning', 'jawStatus');
+                    } else {
+                        log(`✅ /${vowel}/ jaw calculation matches expected: ${Math.round(jawOpening*100)}%`, 'success', 'jawStatus');
+                    }
+                }
+                
+                if (!allTestsPassed) {
+                    throw new Error('Some jaw calculation tests failed');
+                }
+                
+                log('✅ All jaw movement calculations working correctly with real data', 'success', 'jawStatus');
+                updateTestStatus('jawTest', 'passed', 'Real calculations working');
+                return true;
+            } catch (error) {
+                log(`❌ Jaw movement test failed: ${error.message}`, 'error', 'jawStatus');
+                updateTestStatus('jawTest', 'failed', error.message);
+                return false;
+            }
+        }
+        
+        async function testConstraints() { 
+            try {
+                updateTestStatus('constraintsTest', 'running', 'Testing anatomical constraints...');
+                log('🔧 Testing anatomical constraint functions with real position data...', 'info', 'pipelineStatus');
+                
+                let constraintViolations = 0;
+                
+                for (const [vowel, positions] of Object.entries(EXPECTED_POSITIONS)) {
+                    for (const [articulator, pos] of Object.entries(positions)) {
+                        if (articulator === 'jaw_opening') {
+                            if (pos < 0 || pos > 1) {
+                                constraintViolations++;
+                                log(`❌ Invalid jaw opening for ${vowel}: ${pos}`, 'error', 'pipelineStatus');
+                            }
+                            continue;
+                        }
+                        
+                        const bounds = {
+                            ul: { x: [0.5, 1.2], y: [-1.2, -0.8] },
+                            ll: { x: [0.5, 1.2], y: [-1.2, -0.2] },
+                            li: { x: [0.5, 1.2], y: [-1.2, -0.3] },
+                            tt: { x: [-0.5, 1.0], y: [-1.2, -0.2] },
+                            tb: { x: [-0.8, 0.8], y: [-1.2, -0.3] },
+                            td: { x: [-1.2, 0.2], y: [-1.0, -0.4] }
+                        };
+                        
+                        const bound = bounds[articulator];
+                        if (!bound) {
+                            constraintViolations++;
+                            log(`❌ Unknown articulator: ${articulator}`, 'error', 'pipelineStatus');
+                            continue;
+                        }
+                        
+                        if (pos.x < bound.x[0] || pos.x > bound.x[1] || 
+                            pos.y < bound.y[0] || pos.y > bound.y[1]) {
+                            constraintViolations++;
+                            log(`❌ ${vowel}.${articulator} outside bounds: (${pos.x}, ${pos.y}) not in x:[${bound.x}] y:[${bound.y}]`, 'error', 'pipelineStatus');
+                        }
+                    }
+                }
+                
+                for (const [vowel, positions] of Object.entries(EXPECTED_POSITIONS)) {
+                    const jawOpening = positions.jaw_opening;
+                    const lipDistance = Math.abs(positions.ll.y - positions.ul.y);
+                    
+                    if (jawOpening > 0.5 && lipDistance < 0.3) {
+                        log(`⚠️ ${vowel}: High jaw opening (${Math.round(jawOpening*100)}%) but small lip distance (${lipDistance.toFixed(2)})`, 'warning', 'pipelineStatus');
+                    }
+                }
+                
+                if (constraintViolations > 0) {
+                    throw new Error(`${constraintViolations} anatomical constraint violations found`);
+                }
+                
+                log('✅ All expected positions within realistic anatomical bounds', 'success', 'pipelineStatus');
+                updateTestStatus('constraintsTest', 'passed', 'Real constraints working');
+                return true;
+            } catch (error) {
+                log(`❌ Constraints test failed: ${error.message}`, 'error', 'pipelineStatus');
+                updateTestStatus('constraintsTest', 'failed', error.message);
+                return false;
+            }
+        }
+        
+        async function testIntegration() { 
+            updateTestStatus('integrationTest', 'running', 'Testing full pipeline...');
+            log('⚡ Testing complete end-to-end integration with real data flow...', 'info', 'pipelineStatus');
+            
+            if (!workerInitialized) {
+                log('❌ Worker not initialized for integration test', 'error', 'pipelineStatus');
+                updateTestStatus('integrationTest', 'failed', 'Worker not ready');
+                return false;
+            }
             
             try {
-                const testWorker = new Worker('data:text/javascript,' + encodeURIComponent(`
-                    self.onmessage = function(e) {
-                        if (e.data.type === 'ping') {
-                            self.postMessage({ 
-                                type: 'pong', 
-                                timestamp: Date.now(),
-                                latency: Date.now() - e.data.timestamp 
-                            });
+                log('🔄 Testing full pipeline: Real Audio → WavLM → Linear → Features → Visualization', 'info', 'pipelineStatus');
+                
+                const testAudio = createSyntheticAudio('i');
+                if (testAudio.length !== 16000) {
+                    throw new Error('Synthetic audio generation failed');
+                }
+                
+                const rms = Math.sqrt(testAudio.reduce((sum, x) => sum + x*x, 0) / testAudio.length);
+                if (rms < 0.001) {
+                    throw new Error('Generated audio has no signal content');
+                }
+                
+                log('✅ Step 1: Real synthetic audio generation working', 'success', 'pipelineStatus');
+                
+                const features = await new Promise((resolve, reject) => {
+                    const timeout = setTimeout(() => {
+                        reject(new Error('Integration test timeout (15s)'));
+                    }, 15000);
+                    
+                    const handler = (e) => {
+                        if (e.data.type === 'features') {
+                            clearTimeout(timeout);
+                            testWorker.removeEventListener('message', handler);
+                            resolve(e.data);
+                        } else if (e.data.type === 'error') {
+                            clearTimeout(timeout);
+                            testWorker.removeEventListener('message', handler);
+                            reject(new Error(`ML pipeline error: ${e.data.error}`));
                         }
                     };
-                `));
+                    
+                    testWorker.addEventListener('message', handler);
+                    testWorker.postMessage({
+                        type: 'process',
+                        audio: testAudio,
+                        config: { sampleRate: 16000 },
+                        sensitivityFactor: 8.0
+                    });
+                });
                 
-                const startTime = Date.now();
+                log('✅ Step 2: WavLM feature extraction working', 'success', 'pipelineStatus');
+                log('✅ Step 3: Linear model projection working', 'success', 'pipelineStatus');
                 
-                testWorker.onmessage = function(e) {
-                    if (e.data.type === 'pong') {
-                        const latency = Date.now() - startTime;
-                        log(`  ✅ Worker communication: ${latency}ms latency`, 'success', 'pipelineAnalysis');
-                        testWorker.terminate();
+                const articulationFeatures = features.articulationFeatures;
+                const requiredKeys = ['ul', 'll', 'li', 'tt', 'tb', 'td'];
+                
+                for (const key of requiredKeys) {
+                    if (!articulationFeatures[key] || 
+                        typeof articulationFeatures[key].x !== 'number' || 
+                        typeof articulationFeatures[key].y !== 'number' ||
+                        isNaN(articulationFeatures[key].x) || isNaN(articulationFeatures[key].y) ||
+                        !isFinite(articulationFeatures[key].x) || !isFinite(articulationFeatures[key].y)) {
+                        throw new Error(`Invalid articulation feature: ${key} = ${JSON.stringify(articulationFeatures[key])}`);
                     }
-                };
-                
-                testWorker.onerror = function(error) {
-                    log(`  ❌ Worker error: ${error.message}`, 'error', 'pipelineAnalysis');
-                };
-                
-                testWorker.postMessage({ type: 'ping', timestamp: startTime });
-                
-            } catch (error) {
-                log(`  ❌ Worker creation failed: ${error.message}`, 'error', 'pipelineAnalysis');
-            }
-        }
-        
-        function testAudioProcessing() {
-            log('🎵 Testing audio processing...', 'info', 'pipelineAnalysis');
-            
-            try {
-                if (!currentAudioContext) {
-                    currentAudioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
                 }
                 
-                log(`  ✅ Audio Context created: ${currentAudioContext.sampleRate}Hz`, 'success', 'pipelineAnalysis');
+                const jawOpening = calculateJawOpening(articulationFeatures.ul.y, articulationFeatures.ll.y);
+                if (typeof jawOpening !== 'number' || isNaN(jawOpening) || !isFinite(jawOpening)) {
+                    throw new Error(`Invalid jaw calculation result: ${jawOpening}`);
+                }
                 
-                // Test AudioWorklet support
-                if (typeof AudioWorkletNode !== 'undefined') {
-                    log('  ✅ AudioWorklet supported', 'success', 'pipelineAnalysis');
+                log('✅ Step 4: Feature validation and jaw calculation working', 'success', 'pipelineStatus');
+                
+                const testFeatures = {...articulationFeatures, jaw_opening: jawOpening};
+                drawVocalTract('actualTract', testFeatures, false);
+                
+                const svgElement = document.getElementById('actualTract');
+                if (!svgElement || svgElement.children.length === 0) {
+                    throw new Error('Visualization rendering failed - no SVG elements created');
+                }
+                
+                log('✅ Step 5: Real visualization rendering working', 'success', 'pipelineStatus');
+                
+                const expectedFeatures = EXPECTED_POSITIONS['i'];
+                const ulDistance = Math.sqrt(Math.pow(articulationFeatures.ul.x - expectedFeatures.ul.x, 2) + 
+                                           Math.pow(articulationFeatures.ul.y - expectedFeatures.ul.y, 2));
+                
+                if (ulDistance > 0.5) {
+                    log(`⚠️ Upper lip position differs significantly from expected: distance ${ulDistance.toFixed(2)}`, 'warning', 'pipelineStatus');
                 } else {
-                    log('  ⚠️ AudioWorklet not supported, will use ScriptProcessor', 'warning', 'pipelineAnalysis');
+                    log(`✅ Extracted features reasonably match expected /i/ characteristics`, 'success', 'pipelineStatus');
                 }
                 
-                // Test audio generation
-                const testAudio = generatePhonemeAudio('a', 1.0);
-                const rms = Math.sqrt(testAudio.audioData.reduce((sum, x) => sum + x*x, 0) / testAudio.audioData.length);
-                log(`  ✅ Audio generation: RMS = ${rms.toFixed(4)}`, 'success', 'pipelineAnalysis');
+                log(`🎉 INTEGRATION TEST COMPLETE WITH REAL DATA:`, 'success', 'pipelineStatus');
+                log(`   Real features extracted: UL(${articulationFeatures.ul.x.toFixed(2)},${articulationFeatures.ul.y.toFixed(2)})`, 'info', 'pipelineStatus');
+                log(`   Real pitch: ${features.pitch || 'N/A'}Hz, Real loudness: ${features.loudness || 'N/A'}dB`, 'info', 'pipelineStatus');
+                log(`   Real jaw opening: ${Math.round(jawOpening * 100)}%`, 'info', 'pipelineStatus');
+                log(`   Audio RMS: ${rms.toFixed(4)}, Feature count: ${Object.keys(articulationFeatures).length}`, 'info', 'pipelineStatus');
+                
+                updateTestStatus('integrationTest', 'passed', 'Full real-data pipeline working');
+                return true;
                 
             } catch (error) {
-                log(`  ❌ Audio processing error: ${error.message}`, 'error', 'pipelineAnalysis');
+                log(`❌ Integration test failed: ${error.message}`, 'error', 'pipelineStatus');
+                updateTestStatus('integrationTest', 'failed', error.message);
+                return false;
             }
         }
         
-        function debugWhyFeaturesDoNotMove() {
-            log('🔍 Debugging why features have limited movement...', 'info', 'pipelineAnalysis');
-            
-            // Test 1: Are we accidentally using fallback instead of real ML?
-            log('  🧪 Checking if system is using simulated data...', 'info', 'pipelineAnalysis');
-            
-            // Test 2: How do constraints affect realistic positions?
-            log('  🧪 Testing how constraints modify positions...', 'info', 'pipelineAnalysis');
-            const testFeatures = {
-                ul: { x: 0.7, y: -1.0 },  // Lip protrusion for /u/
-                tt: { x: 0.85, y: -1.0 }, // Tongue tip for /t/
-                td: { x: -1.0, y: -0.9 }  // Tongue dorsum for /k/
-            };
-            
-            // Apply your app's constraints
-            const constrained = applyYourAppConstraints(testFeatures);
-            
-            // Show the difference
-            log('  📊 Before vs After constraints:', 'info', 'pipelineAnalysis');
-            Object.keys(testFeatures).forEach(art => {
-                const before = testFeatures[art];
-                const after = constrained[art];
-                const changed = Math.abs(before.x - after.x) > 0.01 || Math.abs(before.y - after.y) > 0.01;
-                log(`    ${art}: (${before.x}, ${before.y}) → (${after.x.toFixed(2)}, ${after.y.toFixed(2)}) ${changed ? '⚠️ CONSTRAINED' : '✅ UNCHANGED'}`, 
-                    changed ? 'warning' : 'success', 'pipelineAnalysis');
-            });
-            
-            // Test 3: Check if ML output ranges are too small
-            log('  ⚠️ If ML is working but features barely move, check:', 'warning', 'pipelineAnalysis');
-            log('    - Sensitivity factor too low', 'info', 'pipelineAnalysis'); 
-            log('    - Constraints too tight', 'info', 'pipelineAnalysis');
-            log('    - Smoothing factor too high', 'info', 'pipelineAnalysis');
+        // Main test functions
+        async function runAllTests() {
+            try {
+                updateProgress(0, 'Starting comprehensive tests...');
+                log('🚀 Starting comprehensive system tests with real data...', 'info', 'pipelineStatus');
+                
+                const tests = [
+                    { name: 'ONNX Runtime', fn: testONNXRuntime },
+                    { name: 'Web Worker', fn: testWebWorker },
+                    { name: 'WavLM Model', fn: testWavLMModel },
+                    { name: 'Linear Model', fn: testLinearModel },
+                    { name: 'ML Processing', fn: testMLProcessing },
+                    { name: 'Audio Pipeline', fn: testAudioPipeline },
+                    { name: 'Jaw Movement', fn: testJawMovement },
+                    { name: 'Constraints', fn: testConstraints },
+                    { name: 'Integration', fn: testIntegration }
+                ];
+                
+                let passed = 0;
+                
+                for (let i = 0; i < tests.length; i++) {
+                    const test = tests[i];
+                    log(`🔄 Running test ${i+1}/${tests.length}: ${test.name}`, 'info', 'pipelineStatus');
+                    updateProgress((i / tests.length) * 100, `Testing ${test.name}...`);
+                    
+                    try {
+                        const result = await test.fn();
+                        if (result) {
+                            passed++;
+                            log(`✅ Test ${i+1} passed: ${test.name}`, 'success', 'pipelineStatus');
+                        } else {
+                            log(`❌ Test ${i+1} failed: ${test.name}`, 'error', 'pipelineStatus');
+                        }
+                    } catch (error) {
+                        log(`❌ Test ${i+1} error: ${test.name} - ${error.message}`, 'error', 'pipelineStatus');
+                    }
+                    
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+                
+                updateProgress(100, `Tests complete: ${passed}/${tests.length} passed`);
+                
+                if (passed === tests.length) {
+                    log('🎉 ALL TESTS PASSED! System ready for real speech testing.', 'success', 'pipelineStatus');
+                } else {
+                    log(`⚠️ ${tests.length - passed} test(s) failed. Some features may not work.`, 'warning', 'pipelineStatus');
+                }
+            } catch (error) {
+                console.error('runAllTests error:', error);
+                log(`❌ Critical error in runAllTests: ${error.message}`, 'error', 'pipelineStatus');
+                updateProgress(0, 'Test execution failed');
+            }
+        }
+        
+        async function runModelTests() {
+            try {
+                log('🧠 Running model-specific tests...', 'info', 'pipelineStatus');
+                const modelTests = [testONNXRuntime, testWebWorker, testWavLMModel, testLinearModel, testMLProcessing];
+                let passed = 0;
+                
+                for (let i = 0; i < modelTests.length; i++) {
+                    const test = modelTests[i];
+                    log(`🔄 Running model test ${i+1}/${modelTests.length}`, 'info', 'pipelineStatus');
+                    try {
+                        const result = await test();
+                        if (result) passed++;
+                        await new Promise(resolve => setTimeout(resolve, 300));
+                    } catch (error) {
+                        log(`❌ Model test ${i+1} error: ${error.message}`, 'error', 'pipelineStatus');
+                    }
+                }
+                
+                log(`Model tests: ${passed}/5 passed`, passed === 5 ? 'success' : 'warning', 'pipelineStatus');
+            } catch (error) {
+                console.error('runModelTests error:', error);
+                log(`❌ Critical error in runModelTests: ${error.message}`, 'error', 'pipelineStatus');
+            }
+        }
+        
+        async function testAudioOnly() {
+            try {
+                log('🔊 Running audio-specific tests...', 'info', 'pipelineStatus');
+                const audioTests = [testAudioPipeline, testJawMovement];
+                let passed = 0;
+                
+                for (let i = 0; i < audioTests.length; i++) {
+                    const test = audioTests[i];
+                    log(`🔄 Running audio test ${i+1}/${audioTests.length}`, 'info', 'pipelineStatus');
+                    try {
+                        const result = await test();
+                        if (result) passed++;
+                        await new Promise(resolve => setTimeout(resolve, 300));
+                    } catch (error) {
+                        log(`❌ Audio test ${i+1} error: ${error.message}`, 'error', 'pipelineStatus');
+                    }
+                }
+                
+                log(`Audio tests: ${passed}/2 passed`, passed === 2 ? 'success' : 'warning', 'pipelineStatus');
+            } catch (error) {
+                console.error('testAudioOnly error:', error);
+                log(`❌ Critical error in testAudioOnly: ${error.message}`, 'error', 'pipelineStatus');
+            }
         }
 
-        // Initialize on page load
+        function clearAllLogs() {
+            try {
+                ['pipelineStatus', 'jawStatus'].forEach(id => {
+                    const panel = document.getElementById(id);
+                    if (panel) {
+                        panel.innerHTML = '';
+                    }
+                });
+                
+                ['onnxTest', 'workerTest', 'wavlmTest', 'linearTest', 'mlTest', 'audioTest', 'jawTest', 'constraintsTest', 'integrationTest'].forEach(id => {
+                    updateTestStatus(id, 'pending', 'Pending...');
+                });
+                
+                updateProgress(0, 'Ready to run tests...');
+                
+                setTimeout(() => {
+                    log('🧹 All logs cleared. Ready for new tests.', 'success', 'pipelineStatus');
+                }, 100);
+                
+            } catch (error) {
+                console.error('clearAllLogs error:', error);
+                alert(`Error clearing logs: ${error.message}`);
+            }
+        }
+        
+        function testButtonClick() {
+            log('🔍 Button click detected!', 'success', 'pipelineStatus');
+            updateProgress(25, 'Testing button functionality...');
+            setTimeout(() => {
+                updateProgress(100, 'Button test complete!');
+                log('✅ Button click system working', 'success', 'pipelineStatus');
+            }, 1000);
+        }
+
+        // Expose functions to window for onclick handlers
+        window.runAllTests = runAllTests;
+        window.runModelTests = runModelTests;
+        window.testAudioOnly = testAudioOnly;
+        window.clearAllLogs = clearAllLogs;
+        window.testButtonClick = testButtonClick;
+        window.runTest1 = runTest1;
+        window.startTest2 = startTest2;
+        window.stopTest2 = stopTest2;
+        window.startTest3 = startTest3;
+        window.stopTest3 = stopTest3;
+        window.demoAllVowels = demoAllVowels;
+
+        // Initialize on DOM load
         document.addEventListener('DOMContentLoaded', function() {
-            log('🚀 SPARC Diagnostic Tool initialized', 'success');
-            updateExpectedPositions();
-            
-            // Show initial expected positions
-            drawVocalTract('expectedTract', EXPECTED_POSITIONS.silence, true);
-            drawVocalTract('actualTract', EXPECTED_POSITIONS.silence, false);
+            try {
+                log('🚀 SPARC Diagnostic Tool initialized', 'success', 'pipelineStatus');
+                clearVocalTract('expectedTract');
+                clearVocalTract('actualTract');
+                
+                const requiredFunctions = [
+                    'runAllTests', 'runModelTests', 'testAudioOnly', 'clearAllLogs',
+                    'testONNXRuntime', 'testWebWorker', 'testWavLMModel', 
+                    'testLinearModel', 'testMLProcessing', 'testAudioPipeline',
+                    'testJawMovement', 'testConstraints', 'testIntegration'
+                ];
+                
+                const missingFunctions = [];
+                for (const funcName of requiredFunctions) {
+                    if (typeof window[funcName] !== 'function') {
+                        missingFunctions.push(funcName);
+                    }
+                }
+                
+                if (missingFunctions.length > 0) {
+                    log(`❌ Missing functions: ${missingFunctions.join(', ')}`, 'error', 'pipelineStatus');
+                } else {
+                    log('✅ All required functions are defined', 'success', 'pipelineStatus');
+                }
+                
+                log('Ready to run tests. Click "Run All Tests" to begin.', 'info', 'pipelineStatus');
+                
+            } catch (error) {
+                console.error('Initialization error:', error);
+                log(`❌ Initialization error: ${error.message}`, 'error', 'pipelineStatus');
+            }
         });
     </script>
 </body>

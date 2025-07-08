@@ -82,7 +82,7 @@
             border: 2px solid #e9ecef;
         }
         
-        /* SVG STYLING - FIXED COORDINATE SYSTEM */
+        /* SVG STYLING - IMPROVED COORDINATE SYSTEM WITH JAW ANIMATION */
         #vocal-tract-svg {
             width: 100%;
             height: 400px;
@@ -109,12 +109,14 @@
             fill: none;
             stroke: #333;
             stroke-width: 0.03;
+            transition: d 0.1s ease; /* NEW: Smooth jaw animation */
         }
 
         .teeth {
             fill: white;
             stroke: #333;
             stroke-width: 0.01;
+            transition: x 0.1s ease, y 0.1s ease; /* NEW: Smooth teeth movement with jaw */
         }
 
         .lips {
@@ -122,6 +124,7 @@
             stroke: #cc6666;
             stroke-width: 0.01;
             opacity: 0.9;
+            transition: d 0.1s ease; /* NEW: Smooth lip movement */
         }
 
         .tongue {
@@ -129,12 +132,13 @@
             stroke: #ff8a9b;
             stroke-width: 0.02;
             opacity: 0.9;
+            transition: d 0.1s ease; /* NEW: Smooth tongue movement */
         }
 
         /* DEBUG MARKERS */
         .debug-marker {
             opacity: 0.8;
-            transition: opacity 0.2s ease;
+            transition: opacity 0.2s ease, cx 0.1s ease, cy 0.1s ease;
         }
 
         .debug-marker:hover {
@@ -154,7 +158,7 @@
             display: flex;
             flex-direction: column;
             gap: 20px;
-            min-width: 80px;
+            min-width: 100px;
         }
         
         .feature-display {
@@ -186,6 +190,22 @@
         
         #loudness-bar {
             background: linear-gradient(to top, #27ae60, #2ecc71);
+        }
+        
+        /* NEW: JAW OPENING DISPLAY */
+        .jaw-opening-container {
+            width: 40px;
+            height: 120px;
+            background: #f8f9fa;
+            border: 2px solid #dee2e6;
+            border-radius: 6px;
+            position: relative;
+            overflow: hidden;
+            margin: 0 auto 8px;
+        }
+        
+        #jaw-bar {
+            background: linear-gradient(to top, #8e44ad, #9b59b6);
         }
         
         .feature-label {
@@ -247,6 +267,46 @@
             cursor: pointer;
         }
         
+        /* IMPROVED LEGEND */
+        .legend-section {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        
+        .legend-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
+            margin-top: 10px;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+        
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            border: 1px solid #ddd;
+        }
+        
+        /* NEW: JAW MOVEMENT INDICATOR */
+        .jaw-indicator {
+            background: #e8f4f8;
+            border: 1px solid #b3d9e6;
+            border-radius: 5px;
+            padding: 8px;
+            margin-top: 10px;
+            font-size: 12px;
+            color: #2c5f7a;
+        }
+        
         /* RESPONSIVE DESIGN */
         @media (max-width: 768px) {
             .visualization-wrapper {
@@ -265,6 +325,12 @@
             #vocal-tract-svg {
                 height: 300px;
             }
+            
+            .source-features {
+                flex-direction: row;
+                justify-content: center;
+                min-width: auto;
+            }
         }
         
         /* LOADING ANIMATION */
@@ -277,6 +343,11 @@
             50% { opacity: 0.7; }
             100% { opacity: 1; }
         }
+        
+        /* STATUS INDICATORS */
+        .status-good { background-color: #d4edda; color: #155724; }
+        .status-warning { background-color: #fff3cd; color: #856404; }
+        .status-error { background-color: #f8d7da; color: #721c24; }
     </style>
 </head>
 <body>
@@ -284,6 +355,7 @@
         <div class="text-center mb-4">
             <h1 class="display-4 text-primary">SPARC</h1>
             <p class="lead">Speech Articulatory Coding - Real-time Vocal Tract Visualization</p>
+            <p class="text-muted">Real-time extraction of speech articulatory features with jaw movement</p>
         </div>
         
         <div class="status-indicator" id="status">Status: Loading models...</div>
@@ -292,13 +364,10 @@
         <div class="controls">
             <div class="d-flex gap-2">
                 <button id="startButton" class="btn btn-success btn-lg" disabled>
-                    <i class="bi bi-mic"></i> Start Recording
+                    🎤 Start Recording
                 </button>
                 <button id="stopButton" class="btn btn-danger btn-lg" disabled>
-                    <i class="bi bi-stop"></i> Stop
-                </button>
-                <button id="test-audio-patterns" class="btn btn-info">
-                    <i class="bi bi-waveform"></i> Test Audio Patterns
+                    ⏹️ Stop
                 </button>
             </div>
             
@@ -308,6 +377,7 @@
                 </label>
                 <input type="range" id="sensitivity-slider" class="form-range slider" 
                        min="1" max="20" step="0.5" value="8.0">
+                <small class="text-muted">Higher = more movement</small>
             </div>
             
             <div class="control-group">
@@ -316,14 +386,15 @@
                 </label>
                 <input type="range" id="smoothing-slider" class="form-range slider" 
                        min="0.1" max="0.9" step="0.1" value="0.4">
+                <small class="text-muted">Higher = less jitter</small>
             </div>
             
             <div class="d-flex gap-2">
                 <button id="reset-positions" class="btn btn-outline-secondary">
-                    <i class="bi bi-arrow-clockwise"></i> Reset
+                    🔄 Reset
                 </button>
                 <button id="test-extremes" class="btn btn-outline-warning">
-                    <i class="bi bi-arrows-expand"></i> Test Extremes
+                    🔬 Test Vowels
                 </button>
             </div>
         </div>
@@ -331,21 +402,28 @@
         <!-- VISUALIZATION AREA -->
         <div class="visualization-wrapper">
             <div class="vocal-tract-container">
-                <!-- CORRECTED SVG WITH PROPER VIEWBOX -->
+                <h5 class="text-center mb-3">Vocal Tract Visualization</h5>
+                <!-- SVG WITH PROPER VIEWBOX FOR JAW MOVEMENT -->
                 <svg id="vocal-tract-svg" viewBox="-2 -2 4 3" preserveAspectRatio="xMidYMid meet">
                     <!-- Dynamic elements will be added by JavaScript -->
                 </svg>
                 
-                <!-- DEBUG CONTROLS -->
+                <!-- IMPROVED DEBUG CONTROLS -->
                 <div class="debug-controls">
                     <div class="checkbox-wrapper">
                         <input type="checkbox" id="debug-mode" checked>
-                        <label for="debug-mode">Show debug markers and constraints</label>
+                        <label for="debug-mode">Show articulator markers</label>
+                    </div>
+                    
+                    <!-- NEW: JAW MOVEMENT INDICATOR -->
+                    <div class="jaw-indicator">
+                        <strong>📊 Jaw Opening:</strong> <span id="jaw-opening-value">20%</span>
+                        <br><small>Calculated from lip positions (0% = closed, 100% = wide open)</small>
                     </div>
                 </div>
             </div>
             
-            <!-- SOURCE FEATURES DISPLAY -->
+            <!-- SOURCE FEATURES DISPLAY WITH JAW -->
             <div class="source-features">
                 <div class="feature-display">
                     <div class="feature-bar-container">
@@ -360,46 +438,110 @@
                     </div>
                     <div class="feature-label">Loudness</div>
                 </div>
+                
+                <!-- NEW: JAW OPENING DISPLAY -->
+                <div class="feature-display">
+                    <div class="jaw-opening-container">
+                        <div id="jaw-bar" class="feature-bar-fill" style="height: 20%;"></div>
+                    </div>
+                    <div class="feature-label">Jaw Opening</div>
+                </div>
             </div>
         </div>
         
         <!-- INFORMATION PANEL -->
         <div class="row mt-4">            
-            <div class="col-md-6">
+            <div class="col-md-8">
                 <div class="card">
                     <div class="card-header">
-                        <h5 class="card-title mb-0">Legend</h5>
+                        <h5 class="card-title mb-0">Articulator Legend</h5>
                     </div>
                     <div class="card-body">
-                        <div class="row">
-                            <div class="col-6">
-                                <div style="display: flex; align-items: center; margin-bottom: 8px;">
-                                    <div style="width: 12px; height: 12px; background: #e74c3c; border-radius: 50%; margin-right: 8px;"></div>
-                                    <small>UL - Upper Lip</small>
+                        <div class="legend-grid">
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: #e74c3c;"></div>
+                                <span>UL - Upper Lip</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: #3498db;"></div>
+                                <span>LL - Lower Lip</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: #f1c40f;"></div>
+                                <span>LI - Lip Interface</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: #2ecc71;"></div>
+                                <span>TT - Tongue Tip</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: #9b59b6;"></div>
+                                <span>TB - Tongue Body</span>
+                            </div>
+                            <div class="legend-item">
+                                <div class="legend-color" style="background: #e67e22;"></div>
+                                <span>TD - Tongue Dorsum</span>
+                            </div>
+                        </div>
+                        
+                        <!-- NEW: JAW MOVEMENT SECTION -->
+                        <div class="legend-section">
+                            <h6>🦴 Jaw Movement</h6>
+                            <p class="mb-2 text-muted small">
+                                The jaw opening is automatically calculated from lip positions and controls the position of the lower jaw and teeth.
+                                Watch how the jaw drops for vowels like /a/ and stays closed for high vowels like /i/.
+                            </p>
+                            <div class="legend-grid">
+                                <div class="legend-item">
+                                    <div class="legend-color" style="background: #9b59b6;"></div>
+                                    <span>Jaw Opening (%)</span>
                                 </div>
-                                <div style="display: flex; align-items: center; margin-bottom: 8px;">
-                                    <div style="width: 12px; height: 12px; background: #3498db; border-radius: 50%; margin-right: 8px;"></div>
-                                    <small>LL - Lower Lip</small>
+                                <div class="legend-item">
+                                    <span style="color: #666;">🦷 Lower teeth move with jaw</span>
                                 </div>
-                                <div style="display: flex; align-items: center; margin-bottom: 8px;">
-                                    <div style="width: 12px; height: 12px; background: #f1c40f; border-radius: 50%; margin-right: 8px;"></div>
-                                    <small>LI - Lip Interface</small>
+                                <div class="legend-item">
+                                    <span style="color: #666;">🔗 Calculated from UL-LL distance</span>
                                 </div>
                             </div>
-                            <div class="col-6">
-                                <div style="display: flex; align-items: center; margin-bottom: 8px;">
-                                    <div style="width: 12px; height: 12px; background: #2ecc71; border-radius: 50%; margin-right: 8px;"></div>
-                                    <small>TT - Tongue Tip</small>
-                                </div>
-                                <div style="display: flex; align-items: center; margin-bottom: 8px;">
-                                    <div style="width: 12px; height: 12px; background: #9b59b6; border-radius: 50%; margin-right: 8px;"></div>
-                                    <small>TB - Tongue Body</small>
-                                </div>
-                                <div style="display: flex; align-items: center; margin-bottom: 8px;">
-                                    <div style="width: 12px; height: 12px; background: #e67e22; border-radius: 50%; margin-right: 8px;"></div>
-                                    <small>TD - Tongue Dorsum</small>
-                                </div>
-                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">Instructions</h5>
+                    </div>
+                    <div class="card-body">
+                        <ol class="small">
+                            <li>Wait for models to load (✅ status)</li>
+                            <li>Click "Start Recording" to begin</li>
+                            <li>Speak clearly into your microphone</li>
+                            <li>Watch articulators move in real-time</li>
+                            <li>Try different vowels to see jaw movement</li>
+                            <li>Adjust sensitivity and smoothing as needed</li>
+                        </ol>
+                        
+                        <div class="mt-3">
+                            <h6>📈 Expected Behavior:</h6>
+                            <ul class="small">
+                                <li><strong>/i/ (see):</strong> Small jaw opening, tongue forward/high</li>
+                                <li><strong>/a/ (cat):</strong> Large jaw opening, tongue low/back</li>
+                                <li><strong>/u/ (boot):</strong> Small jaw opening, lips protruded</li>
+                                <li><strong>/s/ (see):</strong> Tongue tip near teeth</li>
+                            </ul>
+                        </div>
+                        
+                        <!-- NEW: JAW MOVEMENT EXAMPLES -->
+                        <div class="mt-3">
+                            <h6>🦴 Jaw Movement Examples:</h6>
+                            <ul class="small">
+                                <li><strong>10% opening:</strong> /i/, /u/ (high vowels)</li>
+                                <li><strong>30% opening:</strong> /e/, /o/ (mid vowels)</li>
+                                <li><strong>80% opening:</strong> /a/ (low vowels)</li>
+                                <li><strong>Variable:</strong> Consonants depend on context</li>
+                            </ul>
                         </div>
                     </div>
                 </div>
@@ -409,5 +551,31 @@
     
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="app.js"></script>
+    
+    <script>
+        // NEW: Add jaw opening display update function
+        function updateJawOpeningDisplay(jawOpening) {
+            const jawBar = document.getElementById('jaw-bar');
+            const jawValue = document.getElementById('jaw-opening-value');
+            
+            if (jawBar) {
+                const percentage = Math.round(jawOpening * 100);
+                jawBar.style.height = percentage + '%';
+            }
+            
+            if (jawValue) {
+                jawValue.textContent = Math.round(jawOpening * 100) + '%';
+            }
+        }
+        
+        // Make the function globally available for app.js
+        window.updateJawOpeningDisplay = updateJawOpeningDisplay;
+        
+        // NEW: Initialize jaw opening display on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Set initial jaw opening display
+            updateJawOpeningDisplay(0.2);
+        });
+    </script>
 </body>
 </html>
