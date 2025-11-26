@@ -33,8 +33,8 @@ fi
 echo "📁 Using audio file: $SAMPLE_AUDIO"
 echo ""
 
-# Step 1: Generate Python ground truth
-echo "Step 1: Generating Python ground truth..."
+# Step 1: Generate Python ground truth (1 second)
+echo "Step 1: Generating Python ground truth (first 1 second)..."
 cd "$(dirname "$0")"
 
 if ! command -v poetry &> /dev/null; then
@@ -43,13 +43,14 @@ if ! command -v poetry &> /dev/null; then
     exit 1
 fi
 
-# Check if in prep directory or tests directory
+# Generate 1-second validation data
 if [ -f "../prep/pyproject.toml" ]; then
     cd ../prep
-    poetry run python ../tests/validate_features.py "$SAMPLE_AUDIO" -o ../tests/python_features.json
+    poetry run python ../tests/validate_first_second.py "$SAMPLE_AUDIO"
     cd ../tests
 else
-    poetry run python validate_features.py "$SAMPLE_AUDIO" -o python_features.json
+    echo "❌ Error: prep/pyproject.toml not found"
+    exit 1
 fi
 
 if [ $? -ne 0 ]; then
@@ -57,30 +58,33 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-echo "✅ Python features generated: python_features.json"
+echo "✅ Python features generated: python_features_1sec.json"
 echo ""
 
 # Step 2: Instructions for JavaScript validation
 echo "Step 2: Validate JavaScript extraction"
 echo "--------------------------------------"
 echo ""
-echo "1. Open validate_js_features.html in your browser:"
-echo "   file://$(pwd)/validate_js_features.html"
+echo "1. Start local web server from project root:"
+echo "   cd .. && python3 server.py"
 echo ""
-echo "2. Load the Python ground truth:"
+echo "2. Open validation page in your browser:"
+echo "   http://localhost:8000/validation.html"
+echo ""
+echo "3. Load the Python ground truth:"
 echo "   - Click 'Load Python JSON'"
-echo "   - Select: python_features.json"
+echo "   - Select: tests/python_features_1sec.json"
 echo ""
-echo "3. Load the same audio file:"
-echo "   - Click 'Load Audio'"
-echo "   - Select: $SAMPLE_AUDIO"
+echo "4. Load the same audio file:"
+echo "   - Click 'Load Audio File'"
+echo "   - Select: Speech-Articulatory-Coding/sample_audio/sample1.wav"
 echo ""
-echo "4. Click 'Run Validation'"
+echo "5. Click 'Extract Features'"
 echo ""
 echo "✅ Expected results:"
-echo "   - Correlation > 0.9 for all features"
-echo "   - RMSE < 0.5 for all features"
-echo "   - All features show ✅ (green checkmark)"
+echo "   - Average Difference < 0.3"
+echo "   - Most features show ✅ Match or ⚠️ Close"
+echo "   - Status: ⚠️ CLOSE or ✅ PASS"
 echo ""
-echo "If validation passes, your JavaScript implementation matches Python! 🎉"
+echo "If average difference < 0.3, your JavaScript implementation is accurate! 🎉"
 

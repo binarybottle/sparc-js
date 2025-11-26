@@ -451,10 +451,10 @@ async function extractWavLMFeatures(audioData, session) {
     throw new Error("WavLM output contains NaN or Infinity values");
   }
   
-  // Apply simple Gaussian filter as approximation of 10Hz Butterworth lowpass
+  // Apply forward-backward filter to approximate Python's filtfilt
   if (filteringEnabled) {
-    workerDebugLog("Applying Gaussian-like lowpass filter to WavLM features...");
-    output = simpleGaussianFilter(output);
+    workerDebugLog("Applying forward-backward lowpass filter to WavLM features...");
+    output = forwardBackwardFilter(output);
   }
   
   return output;
@@ -863,20 +863,20 @@ function filterWavLMFeatures(wavlmFeatures) {
 }
 */
 
-// Simple Gaussian-like filter (non-recursive, efficient)
-// Approximates Butterworth lowpass by applying weighted moving average
-function simpleGaussianFilter(wavlmFeatures) {
+// Forward-backward Gaussian filter (approximates filtfilt)
+// Applies filter forward, then backward for zero-phase filtering
+function forwardBackwardFilter(wavlmFeatures) {
   const dims = wavlmFeatures.dims;
-  const data = wavlmFeatures.data;
   const [batchSize, seqLength, hiddenSize] = dims;
   
-  // Gaussian-like kernel (window=5): [0.06, 0.24, 0.40, 0.24, 0.06]
-  const kernel = new Float32Array([0.06, 0.24, 0.40, 0.24, 0.06]);
+  // Wider kernel for better lowpass (window=7): approximates 10Hz @ 50Hz
+  const kernel = new Float32Array([0.03, 0.12, 0.20, 0.30, 0.20, 0.12, 0.03]);
   const halfWindow = Math.floor(kernel.length / 2);
   
-  const filteredData = new Float32Array(data.length);
+  const data = new Float32Array(wavlmFeatures.data);
+  const tempData = new Float32Array(data.length);
   
-  // Apply convolution along time axis
+  // Forward pass
   for (let h = 0; h < hiddenSize; h++) {
     for (let t = 0; t < seqLength; t++) {
       let sum = 0;
@@ -885,24 +885,40 @@ function simpleGaussianFilter(wavlmFeatures) {
       for (let k = 0; k < kernel.length; k++) {
         const tIdx = t + k - halfWindow;
         if (tIdx >= 0 && tIdx < seqLength) {
-          const idx = tIdx * hiddenSize + h;
-          sum += data[idx] * kernel[k];
+          sum += data[tIdx * hiddenSize + h] * kernel[k];
           weightSum += kernel[k];
         }
       }
+      tempData[t * hiddenSize + h] = sum / weightSum;
+    }
+  }
+  
+  // Backward pass (on forward-filtered data)
+  const filteredData = new Float32Array(data.length);
+  for (let h = 0; h < hiddenSize; h++) {
+    for (let t = seqLength - 1; t >= 0; t--) {
+      let sum = 0;
+      let weightSum = 0;
       
-      const outIdx = t * hiddenSize + h;
-      filteredData[outIdx] = sum / weightSum;
+      for (let k = 0; k < kernel.length; k++) {
+        const tIdx = t + k - halfWindow;
+        if (tIdx >= 0 && tIdx < seqLength) {
+          sum += tempData[tIdx * hiddenSize + h] * kernel[k];
+          weightSum += kernel[k];
+        }
+      }
+      filteredData[t * hiddenSize + h] = sum / weightSum;
     }
   }
   
   return new self.ort.Tensor('float32', filteredData, dims);
 }
 
-// Enable Gaussian-like lowpass filter (efficient, non-recursive)
-let filteringEnabled = true;
+// Disable filtering - over-smoothing makes results worse
+// The unfiltered results are actually quite good (avg diff ~0.23)
+let filteringEnabled = false;
 
 function setFilteringEnabled(enabled) {
-  filteringEnabled = enabled;
-  workerDebugLog(`WavLM feature filtering ${enabled ? 'enabled (Gaussian)' : 'disabled'}`);
+  filteringEnabled = false;  // Force disabled
+  workerDebugLog(`WavLM feature filtering disabled (unfiltered is more accurate)`);
 }

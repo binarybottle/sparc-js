@@ -1,6 +1,7 @@
 #*
 .#*
 .github
+.DS_Store
 models/large/
 
 .ipynb_checkpoints/
