@@ -67,7 +67,7 @@
         };
         
         // Instead of creating an in-memory model, let's test directly with your WavLM model
-        const modelPath = '../models/wavlm_base_layer9_quantized.onnx';
+        const modelPath = '../models/wavlm_large_layer9_quantized.onnx';
         
         // First check if the file exists
         try {
@@ -131,7 +131,7 @@
     document.getElementById('checkWavLm').addEventListener('click', async function() {
       try {
         log("Checking WavLM model file...");
-        const modelPath = '../models/wavlm_base_layer9_quantized.onnx';
+        const modelPath = '../models/wavlm_large_layer9_quantized.onnx';
         
         // Check if file exists
         const response = await fetch(modelPath, { method: 'HEAD' });

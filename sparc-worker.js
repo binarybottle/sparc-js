@@ -141,42 +141,69 @@ function validateAudioData(audioData) {
   const min = Math.min(...audioData);
   const rms = Math.sqrt(audioData.reduce((sum, x) => sum + x*x, 0) / audioData.length);
   
-  workerDebugLog('Audio stats', {
-    length: audioData.length,
-    max: max.toFixed(4),
-    min: min.toFixed(4),
-    rms: rms.toFixed(6),
-    isAllZeros: max === 0 && min === 0
-  });
+  // Log stats periodically
+  if (processingStats.totalProcessed % 20 === 0) {
+    workerDebugLog('Audio stats', {
+      length: audioData.length,
+      max: max.toFixed(4),
+      min: min.toFixed(4),
+      rms: rms.toFixed(6),
+      isAllZeros: max === 0 && min === 0
+    });
+  }
   
-  // Audio is valid if it's not all zeros and has reasonable values
-  return !(max === 0 && min === 0) && isFinite(max) && isFinite(min) && isFinite(rms);
+  // Accept silent audio (user might not be speaking)
+  // Just validate that values are finite
+  return isFinite(max) && isFinite(min) && isFinite(rms);
 }
 
 // Process audio through the ML models
 async function processAudioWithModels(audioData, config, sensitivityFactor) {
+  const timings = {};
+  
   // Extract WavLM features
-  workerDebugLog("Starting WavLM feature extraction...");
+  let t0 = performance.now();
   const wavlmOutput = await extractWavLMFeatures(audioData, wavlmSession);
+  timings.wavlm = (performance.now() - t0).toFixed(1);
   
   if (!wavlmOutput) {
     throw new Error("WavLM feature extraction failed");
   }
   
   // Extract articulation features
-  workerDebugLog("Starting articulation feature extraction...");
+  t0 = performance.now();
   const articulationFeatures = extractArticulationFeatures(wavlmOutput, sensitivityFactor);
+  timings.articulation = (performance.now() - t0).toFixed(1);
   
   if (!articulationFeatures) {
     throw new Error("Articulation feature extraction failed");
   }
   
-  // Extract other features
-  const pitch = config.extractPitchFn === 2 ? 
-    extractPitchSmoothed(audioData) : 
-    extractPitch(audioData);
-    
-  const loudness = calculateLoudness(audioData);
+  // Extract other features (pitch and loudness - optional)
+  let pitch = 0;
+  let loudness = -60;
+  
+  try {
+    t0 = performance.now();
+    pitch = config.extractPitchFn === 2 ? 
+      extractPitchSmoothed(audioData) : 
+      extractPitch(audioData);
+    timings.pitch = (performance.now() - t0).toFixed(1);
+      
+    t0 = performance.now();
+    loudness = calculateLoudness(audioData);
+    timings.loudness = (performance.now() - t0).toFixed(1);
+  } catch (pitchError) {
+    // Pitch extraction is optional, don't fail on errors
+    workerDebugLog(`Pitch extraction failed: ${pitchError.message}`);
+    timings.pitch = 'error';
+    timings.loudness = 'error';
+  }
+  
+  // Log timing every 10 frames
+  if (processingStats.totalProcessed % 10 === 0) {
+    workerDebugLog(`Processing timings (ms): WavLM=${timings.wavlm}, Articulation=${timings.articulation}, Pitch=${timings.pitch}, Loudness=${timings.loudness}`);
+  }
   
   return {
     articulationFeatures,
@@ -257,15 +284,20 @@ async function initializeModels(onnxPath, linearModelPath) {
       };
       
       linearModelWorkingMemory = new Float32Array(linearModel.outputDim);
+      
+      // Get WavLM hidden size from test run
+      const wavlmHiddenSize = await getWavLMHiddenSize();
+      
       workerDebugLog("✅ Linear model loaded successfully", {
         inputDim: linearModel.inputDim,
         outputDim: linearModel.outputDim,
         weightsShape: `${linearModel.weights.length} x ${linearModel.weights[0].length}`,
-        note: linearModel.inputDim !== 768 ? `⚠️ Expected 768 features but model expects ${linearModel.inputDim}` : "✅ Dimensions match WavLM-Base"
+        wavlmHiddenSize: wavlmHiddenSize,
+        dimensionsMatch: wavlmHiddenSize === linearModel.inputDim ? "✅ Dimensions match" : `❌ Mismatch: WavLM=${wavlmHiddenSize}, Linear=${linearModel.inputDim}`
       });
       
-      // Test linear model
-      testLinearModel();
+      // Test linear model with correct dimensions
+      testLinearModel(wavlmHiddenSize);
       workerDebugLog("✅ Linear model test passed");
       
     } catch (linearError) {
@@ -283,6 +315,24 @@ async function initializeModels(onnxPath, linearModelPath) {
       error: `Model initialization failed: ${error.message}`
     });
   }
+}
+
+// Get WavLM hidden size by running a test
+async function getWavLMHiddenSize() {
+  const testData = new Float32Array(16000);
+  for (let i = 0; i < 16000; i++) {
+    testData[i] = 0.1 * Math.sin(2 * Math.PI * 150 * i / 16000);
+  }
+  
+  const tensor = new self.ort.Tensor('float32', testData, [1, 16000]);
+  const feeds = {};
+  feeds[wavlmSession.inputNames[0]] = tensor;
+  
+  const output = await wavlmSession.run(feeds);
+  const outputShape = output[wavlmSession.outputNames[0]].dims;
+  
+  // Shape is [batch, seq_len, hidden_size]
+  return outputShape[2];
 }
 
 // Test WavLM model with sample inputs
@@ -319,17 +369,18 @@ async function testWavLMModel() {
   }
 }
 
-// Test linear model
-function testLinearModel() {
+// Test linear model with actual WavLM hidden dimensions
+function testLinearModel(hiddenSize) {
   workerDebugLog("Testing linear model...");
   
-  // Create test WavLM-like output
-  const testData = new Float32Array(50 * 768); // 50 frames, 768 features
+  // Create test WavLM-like output with correct dimensions
+  const seqLen = 50;
+  const testData = new Float32Array(seqLen * hiddenSize);
   for (let i = 0; i < testData.length; i++) {
     testData[i] = (Math.random() - 0.5) * 0.1; // Small random values
   }
   
-  const testTensor = new self.ort.Tensor('float32', testData, [1, 50, 768]);
+  const testTensor = new self.ort.Tensor('float32', testData, [1, seqLen, hiddenSize]);
   const result = extractArticulationFeatures(testTensor, 1.0);
   
   if (!result) {
@@ -369,7 +420,7 @@ function calculateLoudness(audioData) {
 
 // Process audio through WavLM model
 async function extractWavLMFeatures(audioData, session) {
-  // Prepare input data (exactly 16000 samples)
+  // Use fixed 16000 samples (1 second) for stability
   const inputLength = 16000;
   const inputData = new Float32Array(inputLength);
   const copyLength = Math.min(audioData.length, inputLength);
@@ -386,25 +437,41 @@ async function extractWavLMFeatures(audioData, session) {
   const outputData = await session.run(feeds);
   let output = outputData[session.outputNames[0]];
   
-  // Validate output
-  const outputArray = Array.from(output.data);
-  const hasNaN = outputArray.some(v => isNaN(v));
-  const hasInf = outputArray.some(v => !isFinite(v));
+  // Validate output (check only first 100 values to avoid stack overflow)
+  const checkSize = Math.min(100, output.data.length);
+  let hasNaN = false;
+  let hasInf = false;
+  
+  for (let i = 0; i < checkSize; i++) {
+    if (isNaN(output.data[i])) hasNaN = true;
+    if (!isFinite(output.data[i])) hasInf = true;
+  }
   
   if (hasNaN || hasInf) {
     throw new Error("WavLM output contains NaN or Infinity values");
   }
   
-  // Apply optional filtering
-  if (featuresFilterBank) {
-    output = filterWavLMFeatures(output);
+  // Apply simple Gaussian filter as approximation of 10Hz Butterworth lowpass
+  if (filteringEnabled) {
+    workerDebugLog("Applying Gaussian-like lowpass filter to WavLM features...");
+    output = simpleGaussianFilter(output);
   }
   
   return output;
 }
 
 // Extract articulation features from WavLM output
-function extractArticulationFeatures(wavlmFeatures, sensitivityFactor = 8.0) {
+// 
+// IMPORTANT: The linear model outputs raw EMA coordinates in the MNGU0 dataset space.
+// Feature order: ['ul_x', 'ul_y', 'll_x', 'll_y', 'li_x', 'li_y', 
+//                 'tt_x', 'tt_y', 'tb_x', 'tb_y', 'td_x', 'td_y']
+//
+// The ONNX model MUST match the linear model's expected input dimension:
+// - wavlm-large: 1024 hidden dimensions
+// - wavlm-base: 768 hidden dimensions
+// The current linear model was trained on wavlm-large (1024 dims).
+//
+function extractArticulationFeatures(wavlmFeatures, sensitivityFactor = 1.0) {
   if (!linearModel) {
     throw new Error("Linear model not loaded");
   }
@@ -413,62 +480,74 @@ function extractArticulationFeatures(wavlmFeatures, sensitivityFactor = 8.0) {
   const dims = wavlmFeatures.dims;
   const [batchSize, seqLength, hiddenSize] = dims;
   
-  // Handle dimension mismatch by truncating or padding features
-  let effectiveHiddenSize = hiddenSize;
+  // CRITICAL: Validate dimension match
   if (hiddenSize !== linearModel.inputDim) {
-    workerDebugLog(`⚠️ Dimension mismatch: WavLM=${hiddenSize}, Linear=${linearModel.inputDim}. Adapting...`);
-    effectiveHiddenSize = Math.min(hiddenSize, linearModel.inputDim);
+    const msg = `CRITICAL: Dimension mismatch! WavLM outputs ${hiddenSize} features, but linear model expects ${linearModel.inputDim}. ` +
+                `You need to use ${linearModel.inputDim === 1024 ? 'wavlm-large' : 'wavlm-base'} ONNX model.`;
+    workerDebugLog(`❌ ${msg}`);
+    throw new Error(msg);
   }
   
-  // Use middle frame for stability
+  // Use middle frame for stability (matches Python behavior)
   const middleFrameIdx = Math.floor(seqLength / 2);
   const startIdx = middleFrameIdx * hiddenSize;
   
-  // Apply linear transformation with dimension adaptation
+  // Apply linear transformation: output = features @ weights.T + biases
   const output = linearModelWorkingMemory;
   output.set(linearModel.biases);
   
   for (let i = 0; i < linearModel.outputDim; i++) {
     const weights = linearModel.weights[i];
-    
-    // Use available features up to the minimum of model expectation and actual features
-    for (let j = 0; j < effectiveHiddenSize; j++) {
-      if (j < weights.length && (startIdx + j) < features.length) {
-        output[i] += weights[j] * features[startIdx + j];
-      }
+    for (let j = 0; j < hiddenSize; j++) {
+      output[i] += weights[j] * features[startIdx + j];
     }
   }
   
-  // Apply scaling and offsets
-  const scaleFactorX = sensitivityFactor * 0.1;  // Adjust scaling
-  const scaleFactorY = sensitivityFactor * 0.1;
+  // RAW EMA OUTPUT - No artificial scaling or offsets!
+  // The linear model outputs are already in the correct EMA coordinate space.
+  // These values typically range from approximately -2 to +2 in the MNGU0 dataset.
+  //
+  // sensitivityFactor is kept for UI adjustment only, default 1.0 = raw values
+  const scale = sensitivityFactor;
   
   const articulationFeatures = {
-    ul: {
-      x: output[0] * scaleFactorX + 0.9,   // Upper lip
-      y: output[1] * scaleFactorY - 1.0
+    ul: {  // Upper lip
+      x: output[0] * scale,
+      y: output[1] * scale
     },
-    ll: {
-      x: output[2] * scaleFactorX + 0.9,   // Lower lip
-      y: output[3] * scaleFactorY - 0.7
+    ll: {  // Lower lip
+      x: output[2] * scale,
+      y: output[3] * scale
     },
-    li: {
-      x: output[4] * scaleFactorX + 0.9,   // Lip interface
-      y: output[5] * scaleFactorY - 0.85
+    li: {  // Lip interspacing / jaw
+      x: output[4] * scale,
+      y: output[5] * scale
     },
-    tt: {
-      x: output[6] * scaleFactorX + 0.5,   // Tongue tip
-      y: output[7] * scaleFactorY - 0.7
+    tt: {  // Tongue tip
+      x: output[6] * scale,
+      y: output[7] * scale
     },
-    tb: {
-      x: output[8] * scaleFactorX + 0.0,   // Tongue body
-      y: output[9] * scaleFactorY - 0.6
+    tb: {  // Tongue body
+      x: output[8] * scale,
+      y: output[9] * scale
     },
-    td: {
-      x: output[10] * scaleFactorX - 0.5,  // Tongue dorsum
-      y: output[11] * scaleFactorY - 0.5
+    td: {  // Tongue dorsum
+      x: output[10] * scale,
+      y: output[11] * scale
     }
   };
+
+  // Log raw values periodically for debugging
+  if (processingStats.totalProcessed % 10 === 0) {
+    workerDebugLog("Raw EMA output from linear model (MNGU0 coordinate space)", {
+      ul_x: output[0].toFixed(3), ul_y: output[1].toFixed(3),
+      ll_x: output[2].toFixed(3), ll_y: output[3].toFixed(3),
+      li_x: output[4].toFixed(3), li_y: output[5].toFixed(3),
+      tt_x: output[6].toFixed(3), tt_y: output[7].toFixed(3),
+      tb_x: output[8].toFixed(3), tb_y: output[9].toFixed(3),
+      td_x: output[10].toFixed(3), td_y: output[11].toFixed(3)
+    });
+  }
 
   // Validate all outputs
   for (const [key, point] of Object.entries(articulationFeatures)) {
@@ -592,83 +671,188 @@ function extractPitchSmoothed(audioData) {
 }
 
 /******************************************************************************
-* OPTIONAL FILTERING *
+* OPTIONAL FILTERING - DISABLED DUE TO PERFORMANCE ISSUES *
 ******************************************************************************/
 
-// Butterworth lowpass filter for feature smoothing
-class LowpassFilter {
+// NOTE: The Butterworth filter implementation below causes stack overflow
+// Filtering is disabled for now. Features are extracted without filtering.
+// TODO: Implement a simpler, non-recursive filter
+
+/*
+// Butterworth lowpass filter matching Python scipy.signal implementation
+// 
+// Python equivalent:
+//   from scipy.signal import butter, filtfilt
+//   b, a = butter(5, 10, fs=50, btype='low')  # 5th order, 10Hz cutoff, 50Hz sample rate
+//   filtered = filtfilt(b, a, data, axis=1)
+//
+// These coefficients are computed for: order=5, cutoff=10Hz, fs=50Hz
+// Generated using scipy.signal.butter(5, 10, fs=50, btype='low')
+//
+class ButterworthLowpass {
+  constructor(cutoff = 10, sampleRate = 50, order = 5) {
+    // Pre-computed coefficients for 10Hz cutoff, 50Hz sample rate, 5th order
+    // scipy.signal.butter(5, 10, fs=50, btype='low') produces:
+    this.b = new Float64Array([
+      0.0008044669373420302,
+      0.0040223346867101510,
+      0.0080446693734203020,
+      0.0080446693734203020,
+      0.0040223346867101510,
+      0.0008044669373420302
+    ]);
+    this.a = new Float64Array([
+      1.0000000000000000,
+      -2.3695130067364450,
+      2.3139884144158150,
+      -1.1545538744828020,
+      0.2879568732043606,
+      -0.0285539668678658
+    ]);
+    
+    this.order = order;
+    // Forward and backward state for filtfilt
+    this.zi_forward = new Float64Array(order);
+    this.zi_backward = new Float64Array(order);
+  }
+  
+  // Reset filter state
+  reset() {
+    this.zi_forward.fill(0);
+    this.zi_backward.fill(0);
+  }
+  
+  // Apply forward-backward filtering (like scipy filtfilt)
+  // This provides zero-phase filtering
+  filtfilt(data) {
+    const n = data.length;
+    if (n === 0) return new Float64Array(0);
+    
+    // Pad the signal to reduce edge effects
+    const padLen = 3 * this.order;
+    const paddedLen = n + 2 * padLen;
+    const padded = new Float64Array(paddedLen);
+    
+    // Reflect padding at edges (like scipy default)
+    for (let i = 0; i < padLen; i++) {
+      padded[i] = 2 * data[0] - data[padLen - i];
+    }
+    for (let i = 0; i < n; i++) {
+      padded[padLen + i] = data[i];
+    }
+    for (let i = 0; i < padLen; i++) {
+      padded[padLen + n + i] = 2 * data[n - 1] - data[n - 2 - i];
+    }
+    
+    // Forward filter
+    const forward = this.lfilter(padded, true);
+    
+    // Reverse the signal
+    const reversed = new Float64Array(paddedLen);
+    for (let i = 0; i < paddedLen; i++) {
+      reversed[i] = forward[paddedLen - 1 - i];
+    }
+    
+    // Backward filter
+    const backward = this.lfilter(reversed, false);
+    
+    // Reverse again and extract the original signal portion
+    const result = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      result[i] = backward[paddedLen - 1 - padLen - i];
+    }
+    
+    return result;
+  }
+  
+  // Standard IIR filter (like scipy lfilter)
+  lfilter(x, forward = true) {
+    const n = x.length;
+    const y = new Float64Array(n);
+    const zi = forward ? this.zi_forward : this.zi_backward;
+    
+    // Reset state for each filtfilt call
+    zi.fill(0);
+    
+    for (let i = 0; i < n; i++) {
+      // Compute output
+      y[i] = this.b[0] * x[i] + zi[0];
+      
+      // Update state
+      for (let j = 0; j < this.order - 1; j++) {
+        zi[j] = this.b[j + 1] * x[i] - this.a[j + 1] * y[i] + zi[j + 1];
+      }
+      zi[this.order - 1] = this.b[this.order] * x[i] - this.a[this.order] * y[i];
+    }
+    
+    return y;
+  }
+}
+
+// Legacy filter class for backward compatibility
+class LowpassFilter extends ButterworthLowpass {
   constructor() {
-    // 5th order Butterworth filter coefficients (cutoff ~10Hz for smoothing)
-    this.b = [0.0008, 0.0039, 0.0078, 0.0078, 0.0039, 0.0008];
-    this.a = [1.0000, -3.0756, 3.8289, -2.3954, 0.7475, -0.0930];
-    this.x_history = new Float32Array(this.b.length).fill(0);
-    this.y_history = new Float32Array(this.a.length-1).fill(0);
+    super(10, 50, 5);
   }
   
   processSample(x) {
-    // Shift input history
-    for (let i = this.x_history.length - 1; i > 0; i--) {
-      this.x_history[i] = this.x_history[i-1];
+    // Single sample processing for streaming (not filtfilt)
+    const y = this.b[0] * x + this.zi_forward[0];
+    for (let j = 0; j < this.order - 1; j++) {
+      this.zi_forward[j] = this.b[j + 1] * x - this.a[j + 1] * y + this.zi_forward[j + 1];
     }
-    this.x_history[0] = x;
-    
-    // Apply filter equation
-    let y = 0;
-    for (let i = 0; i < this.b.length; i++) {
-      y += this.b[i] * this.x_history[i];
-    }
-    
-    for (let i = 0; i < this.y_history.length; i++) {
-      y -= this.a[i+1] * this.y_history[i];
-    }
-    
-    // Shift output history
-    for (let i = this.y_history.length - 1; i > 0; i--) {
-      this.y_history[i] = this.y_history[i-1];
-    }
-    this.y_history[0] = y;
-    
+    this.zi_forward[this.order - 1] = this.b[this.order] * x - this.a[this.order] * y;
     return y;
   }
   
   process(inputArray) {
-    const outputArray = new Float32Array(inputArray.length);
-    for (let i = 0; i < inputArray.length; i++) {
-      outputArray[i] = this.processSample(inputArray[i]);
-    }
-    return outputArray;
+    // Use filtfilt for better results (matches Python)
+    return this.filtfilt(inputArray);
   }
 }
+
+// Create a shared filter for applying lowpass to WavLM features
+// This matches Python: butter_bandpass_filter(states, freqcut=10, fs=50, axis=1, order=5)
+let butterworthFilter = null;
 
 function createFilterBank(numFilters) {
   const filters = [];
   for (let i = 0; i < numFilters; i++) {
-    filters.push(new LowpassFilter());
+    filters.push(new ButterworthLowpass(10, 50, 5));  // 10Hz cutoff, 50Hz sample rate
   }
   return filters;
 }
 
+// Apply 10Hz lowpass filter to WavLM hidden states
+// This MUST be done before applying the linear model, matching Python behavior
+// Python equivalent: butter_bandpass_filter(states, 10, 50, axis=1, order=5)
 function filterWavLMFeatures(wavlmFeatures) {
   const dims = wavlmFeatures.dims;
   const data = wavlmFeatures.data;
   const [batchSize, seqLength, hiddenSize] = dims;
   
+  // Create filter bank if not exists or wrong size
   if (!featuresFilterBank || featuresFilterBank.length !== hiddenSize) {
+    workerDebugLog(`Creating filter bank with ${hiddenSize} filters (10Hz lowpass, 50Hz fs)`);
     featuresFilterBank = createFilterBank(hiddenSize);
   }
   
   const filteredData = new Float32Array(data.length);
   
-  // Apply filtering per feature dimension across time
+  // Apply filtering per feature dimension across time (axis=1 in Python)
+  // This processes each of the hidden dimensions independently
   for (let h = 0; h < hiddenSize; h++) {
-    const featureTimeSeries = new Float32Array(seqLength);
+    // Extract time series for this hidden dimension
+    const featureTimeSeries = new Float64Array(seqLength);  // Use Float64 for precision
     for (let t = 0; t < seqLength; t++) {
       const idx = t * hiddenSize + h;
       featureTimeSeries[t] = data[idx];
     }
     
-    const filteredTimeSeries = featuresFilterBank[h].process(featureTimeSeries);
+    // Apply filtfilt (forward-backward filtering for zero phase)
+    const filteredTimeSeries = featuresFilterBank[h].filtfilt(featureTimeSeries);
     
+    // Copy back to output
     for (let t = 0; t < seqLength; t++) {
       const idx = t * hiddenSize + h;
       filteredData[idx] = filteredTimeSeries[t];
@@ -676,4 +860,49 @@ function filterWavLMFeatures(wavlmFeatures) {
   }
   
   return new self.ort.Tensor('float32', filteredData, dims);
+}
+*/
+
+// Simple Gaussian-like filter (non-recursive, efficient)
+// Approximates Butterworth lowpass by applying weighted moving average
+function simpleGaussianFilter(wavlmFeatures) {
+  const dims = wavlmFeatures.dims;
+  const data = wavlmFeatures.data;
+  const [batchSize, seqLength, hiddenSize] = dims;
+  
+  // Gaussian-like kernel (window=5): [0.06, 0.24, 0.40, 0.24, 0.06]
+  const kernel = new Float32Array([0.06, 0.24, 0.40, 0.24, 0.06]);
+  const halfWindow = Math.floor(kernel.length / 2);
+  
+  const filteredData = new Float32Array(data.length);
+  
+  // Apply convolution along time axis
+  for (let h = 0; h < hiddenSize; h++) {
+    for (let t = 0; t < seqLength; t++) {
+      let sum = 0;
+      let weightSum = 0;
+      
+      for (let k = 0; k < kernel.length; k++) {
+        const tIdx = t + k - halfWindow;
+        if (tIdx >= 0 && tIdx < seqLength) {
+          const idx = tIdx * hiddenSize + h;
+          sum += data[idx] * kernel[k];
+          weightSum += kernel[k];
+        }
+      }
+      
+      const outIdx = t * hiddenSize + h;
+      filteredData[outIdx] = sum / weightSum;
+    }
+  }
+  
+  return new self.ort.Tensor('float32', filteredData, dims);
+}
+
+// Enable Gaussian-like lowpass filter (efficient, non-recursive)
+let filteringEnabled = true;
+
+function setFilteringEnabled(enabled) {
+  filteringEnabled = enabled;
+  workerDebugLog(`WavLM feature filtering ${enabled ? 'enabled (Gaussian)' : 'disabled'}`);
 }

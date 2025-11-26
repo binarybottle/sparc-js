@@ -1,6 +1,6 @@
 #*
 .#*
-
+.github
 models/large/
 
 .ipynb_checkpoints/
@@ -13,3 +13,5 @@ venv/
 node_modules/
 package-lock.json
 package.json
+
+Speech-Articulatory-Coding

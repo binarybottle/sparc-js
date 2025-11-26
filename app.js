@@ -85,7 +85,9 @@ let smoothedFeatures = {
   jaw_opening: 0.2  // NEW: Jaw opening (0 = closed, 1 = wide open)
 };
 
-let sensitivityFactor = 8.0;
+// Sensitivity factor for EMA values (1.0 = raw values from model)
+// Note: Set to 1.0 for accurate feature extraction matching Python SPARC
+let sensitivityFactor = 1.0;
 let smoothingFactor = 0.4;
 
 // Feature history including jaw
@@ -136,8 +138,10 @@ function getRecentAudioBuffer() {
   try {
     const recentAudio = new Float32Array(config.bufferSize);
     
+    // Read backwards from current write position to get most recent audio
     for (let i = 0; i < config.bufferSize; i++) {
-      const index = (audioBufferIndex + i) % config.bufferSize;
+      // Calculate index: go back from current position
+      const index = (audioBufferIndex - config.bufferSize + i + config.bufferSize) % config.bufferSize;
       recentAudio[i] = audioBuffer[index];
     }
     
@@ -190,7 +194,10 @@ function applyAnatomicalConstraints(features) {
 }
 
 // NEW: Calculate jaw opening based on lip positions
+// NOTE: In EMA coords, ul_y and ll_y are in original space (not yet flipped)
 function calculateJawOpening(ul_y, ll_y) {
+  // The lips have negative Y values in EMA space
+  // Lower lip is more negative (more down) than upper lip
   const lipOpening = Math.abs(ll_y - ul_y);
   // Convert lip opening to jaw opening (0 = closed, 1 = wide open)
   const jawOpening = Math.min(Math.max((lipOpening - 0.05) / 0.5, 0), 1);
@@ -256,10 +263,15 @@ async function initSparcWorker() {
       reject(new Error(`Worker creation failed: ${error.message}`));
     };
     
+    // IMPORTANT: Model compatibility requirement
+    // The linear model was trained on WavLM Large (1024 hidden dimensions).
+    // Using the correct WavLM Large ONNX model for accurate feature extraction.
+    // Cache busting version appended to force reload of new model
+    const modelVersion = 'v2';  // Increment when models change
     SparcWorker.postMessage({
       type: 'init',
-      onnxPath: 'models/wavlm_base_layer9_quantized.onnx',
-      linearModelPath: 'models/wavlm_linear_model.json'
+      onnxPath: `models/wavlm_large_layer9_quantized.onnx?v=${modelVersion}`,  // ✅ Correct model (1024 dims)
+      linearModelPath: `models/wavlm_linear_model.json?v=${modelVersion}`
     });
   });
 }
@@ -364,8 +376,9 @@ function updateFeatureHistory(articulationFeatures, pitch, loudness) {
     const alpha = isRecording ? smoothingFactor : 0.3;
     const articulators = ['ul', 'll', 'li', 'tt', 'tb', 'td'];
     
-    // Apply constraints to incoming features
-    applyAnatomicalConstraints(articulationFeatures);
+    // TEMPORARILY DISABLED: Apply constraints to incoming features
+    // Let's see raw model output first to understand the actual coordinate space
+    // applyAnatomicalConstraints(articulationFeatures);
     
     // Update articulator positions
     for (const art of articulators) {
@@ -552,6 +565,7 @@ function setupVocalTractVisualization() {
     return;
   }
   
+  // ViewBox: Standard SVG coordinates (Y+ = down, origin at top-left)
   svg.setAttribute('viewBox', '-2 -2 4 3');
   svg.setAttribute('width', '600');
   svg.setAttribute('height', '400');
@@ -567,7 +581,7 @@ function setupVocalTractVisualization() {
 }
 
 function createStaticElements(svg) {
-  // PALATE (roof of mouth) - static
+  // PALATE (roof of mouth) - static, at TOP of mouth
   const palate = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   palate.setAttribute('class', 'palate');
   palate.setAttribute('id', 'palate');
@@ -577,10 +591,10 @@ function createStaticElements(svg) {
   palate.setAttribute('stroke-width', '0.03');
   svg.appendChild(palate);
   
-  // PHARYNGEAL WALL
+  // PHARYNGEAL WALL (back wall of throat, from palate down to jaw area)
   const pharynxWall = document.createElementNS('http://www.w3.org/2000/svg', 'path');
   pharynxWall.setAttribute('class', 'pharynx');
-  pharynxWall.setAttribute('d', 'M-1.3,-0.8 Q-1.35,-0.55 -1.2,-0.3');
+  pharynxWall.setAttribute('d', 'M-1.3,-0.8 Q-1.35,0.0 -1.2,0.3');
   pharynxWall.setAttribute('fill', 'none');
   pharynxWall.setAttribute('stroke', '#555');
   pharynxWall.setAttribute('stroke-width', '0.02');
@@ -681,21 +695,22 @@ function createDynamicElements(svg) {
   });
 }
 
-// NEW: Create dynamic jaw path based on opening
+// Create dynamic jaw path based on opening
+// Jaw at bottom of mouth, drops down when opening
 function createJawPath(jawOpening) {
-  // Base jaw position
-  const baseY = -0.3;
-  // FIXED: Lower jaw drops as mouth opens (moves to more positive Y)
-  const jawY = baseY + (jawOpening * 0.4);  // Increased range for visibility
+  // Base jaw position (positive Y = bottom of screen in SVG)
+  const baseY = 0.3;
+  // Lower jaw drops MORE as mouth opens (more positive Y = further down)
+  const jawY = baseY + (jawOpening * 0.4);
   
   return `M-1.2,${jawY} Q-0.8,${jawY + 0.05} -0.3,${jawY} Q0.2,${jawY} 0.6,${jawY + 0.05} Q0.9,${jawY} 1.0,${jawY + 0.1}`;
 }
 
-// NEW: Position lower teeth with jaw
+// Position lower teeth with jaw
 function positionLowerTeeth(jawOpening) {
-  const baseY = -0.35;
-  // FIXED: Teeth move down with jaw opening
-  const teethY = baseY + (jawOpening * 0.4);  // Increased range to match jaw
+  const baseY = 0.25;
+  // Teeth move down with jaw opening  
+  const teethY = baseY + (jawOpening * 0.4);
   return {
     x: 0.8,
     y: teethY
@@ -713,14 +728,20 @@ function addLabel(svg, text, x, y) {
   svg.appendChild(label);
 }
 
-// IMPROVED: Create tongue path
+// Create tongue path from EMA coordinates
+// EMA: X+ = forward (lips), X- = back (pharynx); Y+ = up (palate), Y- = down
+// SVG: X+ = right, X- = left; Y+ = down, Y- = up
+// Mapping: EMA_X → SVG_X (same), EMA_Y → SVG_(-Y) (flip)
 function createTonguePath(tt, tb, td) {
-  tt = sanitizePoint(tt, 0.4, -0.7);
-  tb = sanitizePoint(tb, -0.2, -0.6);
-  td = sanitizePoint(td, -0.8, -0.5);
+  // Flip Y-axis for SVG: EMA Y+ (up) becomes SVG Y- (up in screen)
+  tt = sanitizePoint({ x: tt.x, y: -tt.y }, 0.4, -0.7);   // tongue tip
+  tb = sanitizePoint({ x: tb.x, y: -tb.y }, -0.2, -0.6);  // tongue body  
+  td = sanitizePoint({ x: td.x, y: -td.y }, -0.8, -0.5);  // tongue dorsum
   
-  const tongueRoot = { x: -1.15, y: -0.35 };
+  // Tongue root at back/bottom of mouth (negative X = back, slightly positive Y = below center)
+  const tongueRoot = { x: -1.15, y: 0.1 };
   
+  // Draw tongue from root → dorsum → body → tip, then back along bottom
   const tonguePath = `
     M ${tongueRoot.x} ${tongueRoot.y}
     Q ${td.x - 0.05} ${td.y - 0.02} ${td.x} ${td.y}
@@ -735,13 +756,16 @@ function createTonguePath(tt, tb, td) {
   return tonguePath;
 }
 
-// IMPROVED: Create lip paths with realistic movement
+// Create lip paths from EMA coordinates
+// EMA: Y+ = up, Y- = down; SVG: Y+ = down, Y- = up
+// Mapping: EMA_Y → SVG_(-Y)
 function createLipPaths(ul, ll, li) {
-  ul = sanitizePoint(ul, 0.9, -1.0);   
-  ll = sanitizePoint(ll, 0.9, -0.7);   
-  li = sanitizePoint(li, 0.9, -0.85);   
+  // Flip Y-axis: EMA positive Y (up) → SVG negative Y (up on screen)
+  ul = sanitizePoint({ x: ul.x, y: -ul.y }, 0.9, -1.0);   
+  ll = sanitizePoint({ x: ll.x, y: -ll.y }, 0.9, -0.7);   
+  li = sanitizePoint({ x: li.x, y: -li.y }, 0.9, -0.85);   
   
-  // Allow lip movement (no longer forced to x=0.95)
+  // Allow lip movement
   const lipWidth = 0.06;
   const leftX = ul.x - lipWidth;
   const rightX = ul.x + lipWidth;
@@ -1018,12 +1042,12 @@ function updateCharts() {
       lowerTeeth.setAttribute('y', teethPos.y);
     }
 
-    // Update markers
+    // Update markers (flip Y-axis to match SVG coordinates)
     for (const art of articulators) {
       const marker = document.getElementById(`${art}-marker`);
       if (marker && latestFeatures[art]) {
         marker.setAttribute('cx', latestFeatures[art].x);
-        marker.setAttribute('cy', latestFeatures[art].y);
+        marker.setAttribute('cy', -latestFeatures[art].y);  // Flip Y: EMA→SVG
       }
     }
 
@@ -1113,6 +1137,12 @@ function processAudioData(audioData) {
     if (!audioData || audioData.length === 0) {
       debugLog("Empty audio data received");
       return;
+    }
+    
+    // Debug: Log first few samples periodically to verify audio is coming in
+    if (debugCounters.audioDataReceived % 50 === 1) {
+      const maxSample = Math.max(...Array.from(audioData).map(Math.abs));
+      debugLog(`Audio chunk: ${audioData.length} samples, max amplitude: ${maxSample.toFixed(4)}`);
     }
     
     for (let i = 0; i < audioData.length; i++) {

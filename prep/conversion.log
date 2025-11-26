@@ -1,0 +1,143 @@
+/Users/arno.klein/Software/sparc-js/prep/convert_wavlm_large_to_onnx.py:80: UserWarning: # 'dynamic_axes' is not recommended when dynamo=True, and may lead to 'torch._dynamo.exc.UserError: Constraints violated.' Supply the 'dynamic_shapes' argument instead if export is unsuccessful.
+  torch.onnx.export(
+W1125 16:42:58.251000 92974 torch/onnx/_internal/exporter/_compat.py:114] Setting ONNX exporter to use operator set version 18 because the requested opset_version 14 is a lower version than we have implementations for. Automatic version conversion will be performed, which may not be successful at converting to the requested version. If version conversion is unsuccessful, the opset version of the exported model will be kept at 18. Please consider setting opset_version >=18 to leverage latest ONNX features
+W1125 16:42:58.492000 92974 torch/onnx/_internal/exporter/_registration.py:107] torchvision is not installed. Skipping torchvision::nms
+Loading WavLM model: microsoft/wavlm-large
+Target layer: 9
+Model hidden size: 1024
+Number of layers: 24
+Creating truncated model (layer 9 only)...
+Verifying model output dimensions...
+Input shape: torch.Size([1, 16000])
+Output shape: torch.Size([1, 49, 1024])
+Exporting to ONNX: wavlm_large_layer9.onnx
+Traceback (most recent call last):
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/onnx/_internal/exporter/_core.py", line 1416, in export
+    decomposed_program = _prepare_exported_program_for_export(
+        program, registry=registry
+    )
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/onnx/_internal/exporter/_core.py", line 984, in _prepare_exported_program_for_export
+    _fx_passes.insert_type_promotion_nodes(graph_module)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/onnx/_internal/exporter/_fx_passes.py", line 28, in insert_type_promotion_nodes
+    passes.InsertTypePromotion(module).run()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/onnx/_internal/fx/_pass.py", line 235, in run
+    return self._run(*args, **kwargs)
+           ~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/onnx/_internal/fx/passes/type_promotion.py", line 1666, in _run
+    self.interpreter.run(*fake_args)
+    ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/fx/interpreter.py", line 174, in run
+    self.env[node] = self.run_node(node)
+                     ~~~~~~~~~~~~~^^^^^^
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/onnx/_internal/fx/passes/type_promotion.py", line 1585, in run_node
+    return super().run_node(n)
+           ~~~~~~~~~~~~~~~~^^^
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/fx/interpreter.py", line 256, in run_node
+    return getattr(self, n.op)(n.target, args, kwargs)
+           ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/fx/interpreter.py", line 336, in call_function
+    return target(*args, **kwargs)
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/_ops.py", line 841, in __call__
+    return self._op(*args, **kwargs)
+           ~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/utils/_stats.py", line 28, in wrapper
+    return fn(*args, **kwargs)
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/_subclasses/fake_tensor.py", line 1376, in __torch_dispatch__
+    return self.dispatch(func, types, args, kwargs)
+           ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/_subclasses/fake_tensor.py", line 2096, in dispatch
+    return self._cached_dispatch_impl(func, types, args, kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/_subclasses/fake_tensor.py", line 1511, in _cached_dispatch_impl
+    output = self._dispatch_impl(func, types, args, kwargs)
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/_subclasses/fake_tensor.py", line 2725, in _dispatch_impl
+    op_impl_out = op_impl(self, func, *args, **kwargs)
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/_subclasses/fake_impls.py", line 169, in dispatch_to_op_implementations_dict
+    return op_implementations_dict[func](fake_mode, func, *args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/_subclasses/fake_impls.py", line 603, in _view_meta
+    return torch._refs._reshape_view_helper(a, *shape, allow_copy=False)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/_refs/__init__.py", line 3924, in _reshape_view_helper
+    return _reshape_view_helper_core_alg(a, shape, allow_copy)
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/_refs/__init__.py", line 3849, in _reshape_view_helper_core_alg
+    raise ValueError(msg)
+ValueError: Cannot view a tensor with shape torch.Size([((((((((s76//80)) - 3)//2)) - 1)//2)) + 1, 1, 16, (64//s6)]) and strides (Max(1, (64//s6)), 16*Max(1, ((((((((s76//80)) - 3)//2)) - 1)//2)) + 1)*Max(1, (64//s6)), Max(1, ((((((((s76//80)) - 3)//2)) - 1)//2)) + 1)*Max(1, (64//s6)), 1) as a tensor with shape (s6*(((((((((s76//80)) - 3)//2)) - 1)//2)) + 1), 1024)!
+
+While executing %view_12 : [num_users=1] = call_function[target=torch.ops.aten.view.default](args = (%permute_2, [%mul_358, 1024]), kwargs = {})
+Original traceback:
+File "/Users/arno.klein/Software/sparc-js/prep/convert_wavlm_large_to_onnx.py", line 41, in forward
+    outputs = self.wavlm(input_values, output_hidden_states=True)
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/transformers/models/wavlm/modeling_wavlm.py", line 1085, in forward
+    encoder_outputs = self.encoder(
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/transformers/models/wavlm/modeling_wavlm.py", line 499, in forward
+    layer_outputs = layer(
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/transformers/models/wavlm/modeling_wavlm.py", line 358, in forward
+    hidden_states, attn_weights, position_bias = self.attention(
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/transformers/models/wavlm/modeling_wavlm.py", line 182, in forward
+    attn_output, attn_weights = self.torch_multi_head_self_attention(
+Use tlparse to see full graph. (https://github.com/pytorch/tlparse?tab=readme-ov-file#tlparse-parse-structured-pt2-logs)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Users/arno.klein/Software/sparc-js/prep/convert_wavlm_large_to_onnx.py", line 160, in <module>
+    main()
+    ~~~~^^
+  File "/Users/arno.klein/Software/sparc-js/prep/convert_wavlm_large_to_onnx.py", line 80, in main
+    torch.onnx.export(
+    ~~~~~~~~~~~~~~~~~^
+        truncated_model,
+        ^^^^^^^^^^^^^^^^
+    ...<10 lines>...
+        verbose=False
+        ^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/onnx/__init__.py", line 296, in export
+    return _compat.export_compat(
+           ~~~~~~~~~~~~~~~~~~~~~^
+        model,
+        ^^^^^^
+    ...<20 lines>...
+        legacy_export_kwargs=legacy_export_kwargs,
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/onnx/_internal/exporter/_compat.py", line 143, in export_compat
+    onnx_program = _core.export(
+        model,
+    ...<11 lines>...
+        verbose=verbose,
+    )
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/onnx/_internal/exporter/_flags.py", line 23, in wrapper
+    return func(*args, **kwargs)
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/torch/onnx/_internal/exporter/_core.py", line 1444, in export
+    raise _errors.ConversionError(
+    ...<3 lines>...
+    ) from e
+torch.onnx._internal.exporter._errors.ConversionError: Failed to decompose the FX graph for ONNX compatibility. [96mThis is step 2/3[0m of exporting the model to ONNX. Next steps:
+- Create an issue in the PyTorch GitHub repository against the [96m*torch.export*[0m component and attach the full error stack as well as reproduction scripts.
+- Create an error report with `torch.onnx.export(..., report=True)`, and save the ExportedProgram as a pt2 file. Create an issue in the PyTorch GitHub repository against the [96m*onnx*[0m component. Attach the error report and the pt2 model.
+
+## Exception summary
+
+<class 'ValueError'>: Cannot view a tensor with shape torch.Size([((((((((s76//80)) - 3)//2)) - 1)//2)) + 1, 1, 16, (64//s6)]) and strides (Max(1, (64//s6)), 16*Max(1, ((((((((s76//80)) - 3)//2)) - 1)//2)) + 1)*Max(1, (64//s6)), Max(1, ((((((((s76//80)) - 3)//2)) - 1)//2)) + 1)*Max(1, (64//s6)), 1) as a tensor with shape (s6*(((((((((s76//80)) - 3)//2)) - 1)//2)) + 1), 1024)!
+
+While executing %view_12 : [num_users=1] = call_function[target=torch.ops.aten.view.default](args = (%permute_2, [%mul_358, 1024]), kwargs = {})
+Original traceback:
+File "/Users/arno.klein/Software/sparc-js/prep/convert_wavlm_large_to_onnx.py", line 41, in forward
+    outputs = self.wavlm(input_values, output_hidden_states=True)
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/transformers/models/wavlm/modeling_wavlm.py", line 1085, in forward
+    encoder_outputs = self.encoder(
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/transformers/models/wavlm/modeling_wavlm.py", line 499, in forward
+    layer_outputs = layer(
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/transformers/models/wavlm/modeling_wavlm.py", line 358, in forward
+    hidden_states, attn_weights, position_bias = self.attention(
+  File "/Users/arno.klein/Library/Caches/pypoetry/virtualenvs/sparc-js-prep-t9cYBBBO-py3.13/lib/python3.13/site-packages/transformers/models/wavlm/modeling_wavlm.py", line 182, in forward
+    attn_output, attn_weights = self.torch_multi_head_self_attention(
+Use tlparse to see full graph. (https://github.com/pytorch/tlparse?tab=readme-ov-file#tlparse-parse-structured-pt2-logs)
+
+(Refer to the full stack trace above for more information.)

@@ -86,7 +86,7 @@ async function initOnnxRuntime() {
         graphOptimizationLevel: 'all'
       };
       
-      const modelPath = '../models/wavlm_base_layer9_quantized.onnx';
+      const modelPath = '../models/wavlm_large_layer9_quantized.onnx';
       const wavlmSession = await ort.InferenceSession.create(modelPath, options);
       
       console.log("WavLM model loaded successfully");
