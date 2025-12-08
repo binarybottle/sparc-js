@@ -91,58 +91,109 @@
             border: 1px solid #dee2e6;
         }
 
-        /* VOCAL TRACT ELEMENTS */
+        /* VOCAL TRACT ELEMENTS - Improved Realism */
+        
+        /* Pharyngeal wall (back of throat) */
         .pharynx {
             fill: none;
-            stroke: #666;
-            stroke-width: 0.02;
-            opacity: 0.7;
+            stroke: #999;
+            stroke-width: 0.025;
+            stroke-linecap: round;
+            opacity: 0.8;
         }
 
+        /* Palate (roof of mouth) - soft pink/beige */
         .palate {
             fill: none;
-            stroke: #333;
-            stroke-width: 0.03;
+            stroke: #d4a5a5;
+            stroke-width: 0.05;
+            stroke-linecap: round;
+        }
+        
+        /* Velum (soft palate at back) */
+        .velum {
+            fill: none;
+            stroke: #d4a5a5;
+            stroke-width: 0.06;
+            stroke-linecap: round;
+        }
+        
+        /* Alveolar ridge (bumpy ridge behind teeth) */
+        .alveolar {
+            fill: none;
+            stroke: #c49090;
+            stroke-width: 0.02;
         }
 
+        /* Jaw outline - neutral gray, no skin tone */
         .jaw {
             fill: none;
-            stroke: #333;
-            stroke-width: 0.03;
-            transition: d 0.1s ease; /* NEW: Smooth jaw animation */
-        }
-
-        .teeth {
-            fill: white;
-            stroke: #333;
-            stroke-width: 0.01;
-            transition: x 0.1s ease, y 0.1s ease; /* NEW: Smooth teeth movement with jaw */
-        }
-
-        .lips {
-            fill: #ff9999;
-            stroke: #cc6666;
-            stroke-width: 0.01;
-            opacity: 0.9;
-            transition: d 0.1s ease; /* NEW: Smooth lip movement */
-        }
-
-        .tongue {
-            fill: #ffb3ba;
-            stroke: #ff8a9b;
-            stroke-width: 0.02;
-            opacity: 0.9;
-            transition: d 0.1s ease; /* NEW: Smooth tongue movement */
-        }
-
-        /* DEBUG MARKERS */
-        .debug-marker {
+            stroke: #666;
+            stroke-width: 0.04;
+            stroke-dasharray: 0.08, 0.04;
             opacity: 0.8;
-            transition: opacity 0.2s ease, cx 0.1s ease, cy 0.1s ease;
+            transition: d 0.05s ease-out;
         }
 
-        .debug-marker:hover {
+        /* Teeth - bright white with subtle shadow */
+        .teeth {
+            fill: #ffffff;
+            stroke: #444;
+            stroke-width: 0.012;
+            filter: drop-shadow(0 0.01px 0.02px rgba(0,0,0,0.2));
+            transition: transform 0.05s ease-out;
+        }
+
+        /* Lips - natural pink/red */
+        .lips {
+            fill: #e88989;
+            stroke: #cc5555;
+            stroke-width: 0.015;
+            opacity: 0.95;
+            transition: d 0.05s ease-out;
+        }
+        
+        .upper-lip {
+            fill: #e88989;
+            stroke: #cc5555;
+            stroke-width: 0.015;
+        }
+        
+        .lower-lip {
+            fill: #dd7777;
+            stroke: #bb4444;
+            stroke-width: 0.015;
+        }
+
+        /* Tongue - pink with realistic texture */
+        .tongue {
+            fill: #ff9db3;
+            stroke: #ee6688;
+            stroke-width: 0.02;
+            opacity: 0.95;
+            transition: d 0.05s ease-out;
+        }
+
+        /* SIMPLIFIED: Articulator markers always visible */
+        .articulator-marker {
             opacity: 1;
+            transition: cx 0.1s ease-out, cy 0.1s ease-out;
+            cursor: pointer;
+        }
+
+        .articulator-marker:hover {
+            opacity: 1;
+            filter: brightness(1.2);
+        }
+        
+        .articulator-label {
+            pointer-events: none;
+            transition: x 0.1s ease-out, y 0.1s ease-out;
+        }
+        
+        /* Reference grid */
+        #reference-grid {
+            pointer-events: none;
         }
 
         /* SVG TEXT LABELS */
@@ -389,13 +440,22 @@
                 <small class="text-muted">Higher = less jitter</small>
             </div>
             
-            <div class="d-flex gap-2">
+            <div class="d-flex gap-2 align-items-center">
                 <button id="reset-positions" class="btn btn-outline-secondary">
                     🔄 Reset
                 </button>
-                <button id="test-extremes" class="btn btn-outline-warning">
-                    🔬 Test Vowels
+                <button id="test-center" class="btn btn-outline-info" style="margin-left: 5px;">
+                    🎯 Test Center
                 </button>
+                <label class="mb-0 ms-3">Test Sound:</label>
+                <select id="sound-selector" class="form-select" style="width: auto;">
+                    <option value="">-- Select --</option>
+                    <option value="i">/i/ - "ee" (high front)</option>
+                    <option value="e">/e/ - "eh" (mid front)</option>
+                    <option value="a">/a/ - "ah" (low open)</option>
+                    <option value="o">/o/ - "oh" (mid back)</option>
+                    <option value="u">/u/ - "oo" (high back)</option>
+                </select>
             </div>
         </div>
         
@@ -404,7 +464,7 @@
             <div class="vocal-tract-container">
                 <h5 class="text-center mb-3">Vocal Tract Visualization</h5>
                 <!-- SVG WITH PROPER VIEWBOX FOR JAW MOVEMENT -->
-                <svg id="vocal-tract-svg" viewBox="-2 -2 4 3" preserveAspectRatio="xMidYMid meet">
+                <svg id="vocal-tract-svg" viewBox="-3.2 -3.2 6.4 6.4" preserveAspectRatio="xMidYMid meet">
                     <!-- Dynamic elements will be added by JavaScript -->
                 </svg>
                 

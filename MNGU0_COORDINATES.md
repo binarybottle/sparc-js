@@ -107,3 +107,5 @@ If you see values like `ul_x=0.8, tt_x=-0.5`, these are likely:
 
 The `sensitivityFactor` should be 1.0 to get raw MNGU0 coordinates.
 
+
+
