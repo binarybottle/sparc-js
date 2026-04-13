@@ -48,7 +48,6 @@ let smoothedFeatures = {
   jaw_opening: 0.3
 };
 
-let sensitivityFactor = 1.0;
 let smoothingFactor = 0.4;
 let featureHistory = {};
 
@@ -302,8 +301,7 @@ async function extractFeaturesLoop() {
     SparcWorker.postMessage({
       type: 'process',
       audio: new Float32Array(recentAudio),
-      config: config,
-      sensitivityFactor: sensitivityFactor
+      config: config
     });
 
     pendingWorkerResponses++;
@@ -499,15 +497,6 @@ async function init() {
     }
 
     updateStatus('Models loaded. Ready to start.');
-
-    const debugMode = document.getElementById('debug-mode');
-    if (debugMode) {
-      debugMode.checked = true;
-      debugMode.addEventListener('change', function() {
-        if (typeof toggleDebugMarkers === 'function') toggleDebugMarkers(this.checked);
-      });
-      if (typeof toggleDebugMarkers === 'function') toggleDebugMarkers(true);
-    }
   } catch (error) {
     updateStatus(`CRITICAL ERROR: ${error.message}`);
     debugLog('Model loading failed', error);
@@ -515,8 +504,6 @@ async function init() {
 
     const startBtn = document.getElementById('startButton');
     if (startBtn) startBtn.disabled = true;
-    const testBtn = document.getElementById('testButton');
-    if (testBtn) testBtn.disabled = true;
 
     const errorMsg = document.createElement('div');
     errorMsg.style.cssText = `

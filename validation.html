@@ -367,8 +367,7 @@
                     worker.postMessage({
                         type: 'process',
                         audio: audioSlice,
-                        config: { extractPitchFn: 1, sampleRate: 16000 },
-                        sensitivityFactor: 1.0
+                        config: { extractPitchFn: 1, sampleRate: 16000 }
                     });
                 } catch (error) {
                     clearTimeout(timeout);

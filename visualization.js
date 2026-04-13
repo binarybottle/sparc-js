@@ -2,16 +2,15 @@
  * SPARC Visualization - Vocal Tract Display
  *
  * Renders articulatory feature positions as colored markers on an SVG grid.
- * Also handles demo animation, sensitivity/smoothing controls, and
+ * Also handles demo animation, smoothing control, and
  * pitch/loudness/jaw-opening bar displays.
  *
  * Depends on global state from app.js:
  *   smoothedFeatures, featureHistory, debugCounters,
- *   sensitivityFactor, smoothingFactor, isRecording,
- *   animationRunning, animationFrame,
+ *   smoothingFactor, isRecording, animationRunning, animationFrame,
  *   DISPLAY_MIN, DISPLAY_MAX,
  *   scaleToDisplay, clampToDisplay, updateFeatureHistory,
- *   initializeDefaultPositions, updateStatus, debugLog
+ *   calculateJawOpening, updateStatus, debugLog
  ******************************************************************************/
 
 /******************************************************************************
@@ -25,7 +24,6 @@ function setupVocalTractVisualization() {
     return;
   }
 
-  // ViewBox covers full MNGU0 EMA range: X ~[-5,+4], Y ~[-5,+4]
   svg.setAttribute('viewBox', '-5 -5 9 9');
   svg.setAttribute('width', '600');
   svg.setAttribute('height', '600');
@@ -62,7 +60,6 @@ function createReferenceGrid(svg) {
 
   svg.appendChild(grid);
 
-  // MNGU0 axes: X+ = forward (lips), X- = back (throat), Y+ = up, Y- = down
   addSvgLabel(svg, 'FRONT (+X)', 3.0, 0.3);
   addSvgLabel(svg, 'BACK (-X)', -4.2, 0.3);
   addSvgLabel(svg, 'UP (+Y)', 0.2, -4.5);
@@ -181,14 +178,12 @@ function updateCharts() {
       }
     }
 
-    // Pitch and loudness bars
     if (featureHistory.pitch && featureHistory.loudness) {
       const p = featureHistory.pitch[featureHistory.pitch.length - 1];
       const l = featureHistory.loudness[featureHistory.loudness.length - 1];
       updateSourceFeatures(p, l);
     }
 
-    // Jaw opening bar
     if (typeof window !== 'undefined' && typeof window.updateJawOpeningDisplay === 'function') {
       window.updateJawOpeningDisplay(smoothedFeatures.jaw_opening);
     }
@@ -208,15 +203,17 @@ function updateSourceFeatures(pitch, loudness) {
   if (loudnessBar) loudnessBar.style.height = normalizedLoudness + '%';
 }
 
-function toggleDebugMarkers(show) {
-  document.querySelectorAll('.debug-marker').forEach(m => {
-    m.style.display = show ? 'block' : 'none';
-  });
-}
-
 /******************************************************************************
  * DEFAULT POSITIONS & DEMO ANIMATION
  ******************************************************************************/
+
+function stopAnimation() {
+  animationRunning = false;
+  if (animationFrame) {
+    clearTimeout(animationFrame);
+    animationFrame = null;
+  }
+}
 
 function initializeDefaultPositions() {
   const defaultPositions = {
@@ -247,7 +244,6 @@ function initializeDefaultPositions() {
   }
 }
 
-// Approximate MNGU0 EMA coordinates for vowel demo positions
 const VOWEL_POSITIONS = {
   'i': {
     ul: {x: 2.5, y: -1.5}, ll: {x: 2.5, y: -0.8}, li: {x: 1.8, y: -0.3},
@@ -330,7 +326,7 @@ function testArticulatorAnimation() {
     updateCharts();
 
     if (frame % frameTransitions === 0) {
-      updateStatus(`Demo: ${curr.name} → ${next.name}`);
+      updateStatus(`Demo: ${curr.name}`);
     }
 
     frame++;
@@ -354,39 +350,12 @@ function setupCharts() {
 }
 
 function setupSensitivityControls() {
-  const sensitivitySlider = document.getElementById('sensitivity-slider');
-  const sensitivityValue = document.getElementById('sensitivity-value');
-  if (sensitivitySlider) {
-    sensitivitySlider.addEventListener('input', function() {
-      sensitivityFactor = parseFloat(this.value);
-      if (sensitivityValue) sensitivityValue.textContent = sensitivityFactor.toFixed(1);
-    });
-  }
-
   const smoothingSlider = document.getElementById('smoothing-slider');
   const smoothingValue = document.getElementById('smoothing-value');
   if (smoothingSlider) {
     smoothingSlider.addEventListener('input', function() {
       smoothingFactor = parseFloat(this.value);
       if (smoothingValue) smoothingValue.textContent = smoothingFactor.toFixed(1);
-    });
-  }
-
-  const resetButton = document.getElementById('reset-positions');
-  if (resetButton) {
-    resetButton.addEventListener('click', () => initializeDefaultPositions());
-  }
-
-  const testCenterButton = document.getElementById('test-center');
-  if (testCenterButton) {
-    testCenterButton.addEventListener('click', function() {
-      for (const art of ['ul', 'll', 'li', 'tt', 'tb', 'td']) {
-        smoothedFeatures[art + '_x'] = 0;
-        smoothedFeatures[art + '_y'] = 0;
-        if (featureHistory[art + '_x']) featureHistory[art + '_x'][featureHistory[art + '_x'].length - 1] = 0;
-        if (featureHistory[art + '_y']) featureHistory[art + '_y'][featureHistory[art + '_y'].length - 1] = 0;
-      }
-      updateCharts();
     });
   }
 
@@ -399,10 +368,13 @@ function setupSensitivityControls() {
         return;
       }
 
+      // Stop the cycling demo animation when a sound is selected
+      stopAnimation();
+
       const vowel = soundSelector.value;
       if (vowel && VOWEL_POSITIONS[vowel]) {
         const pos = VOWEL_POSITIONS[vowel];
-        updateStatus(`Demo: /${vowel}/`);
+        updateStatus(`/${vowel}/`);
 
         for (const art of ['ul', 'll', 'li', 'tt', 'tb', 'td']) {
           if (!pos[art]) continue;
@@ -416,39 +388,9 @@ function setupSensitivityControls() {
         smoothedFeatures.jaw_opening = pos.jaw_opening;
         updateCharts();
       } else if (!vowel) {
-        initializeDefaultPositions();
-        updateCharts();
-        updateStatus('Ready to start.');
+        // "-- Select --" chosen: restart animation
+        testArticulatorAnimation();
       }
     });
   }
 }
-
-/******************************************************************************
- * DEBUG STATUS OVERLAY
- ******************************************************************************/
-
-function updateDebugStatus() {
-  let el = document.getElementById('debug-status');
-  if (!el) {
-    el = document.createElement('div');
-    el.id = 'debug-status';
-    el.style.cssText = `
-      position: fixed; left: 10px; bottom: 10px;
-      background: rgba(0,0,0,0.8); color: white;
-      padding: 10px; border-radius: 5px;
-      font-size: 12px; font-family: monospace;
-      z-index: 1001; white-space: pre-line;
-      max-width: 200px;
-    `;
-    document.body.appendChild(el);
-  }
-  el.innerHTML = `Audio: ${debugCounters.audioDataReceived}
-Worker msgs: ${debugCounters.workerMessagesSent}
-Responses: ${debugCounters.workerResponsesReceived}
-Features: ${debugCounters.featuresUpdated}
-Charts: ${debugCounters.chartsUpdated}
-Errors: ${debugCounters.errors}`;
-}
-
-setInterval(updateDebugStatus, 500);

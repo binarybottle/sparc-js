@@ -91,13 +91,11 @@ async function handleProcessMessage(message) {
     }
 
     const config = message.config;
-    const sensitivityFactor = message.sensitivityFactor || 1.0;
-
     if (!validateAudioData(audioData)) {
       throw new Error('Invalid audio data received');
     }
 
-    const result = await processAudioWithModels(audioData, config, sensitivityFactor);
+    const result = await processAudioWithModels(audioData, config);
 
     self.postMessage({
       type: 'features',
@@ -299,11 +297,11 @@ function testLinearModel(hiddenSize) {
  *    li_x, li_y, ul_x, ul_y, ll_x, ll_y]
  ******************************************************************************/
 
-async function processAudioWithModels(audioData, config, sensitivityFactor) {
+async function processAudioWithModels(audioData, config) {
   const wavlmOutput = await extractWavLMFeatures(audioData, wavlmSession);
   if (!wavlmOutput) throw new Error('WavLM feature extraction failed');
 
-  const articulationFeatures = extractArticulationFeatures(wavlmOutput, sensitivityFactor);
+  const articulationFeatures = extractArticulationFeatures(wavlmOutput);
   if (!articulationFeatures) throw new Error('Articulation feature extraction failed');
 
   let pitch = 0;
@@ -381,7 +379,7 @@ async function extractWavLMFeatures(audioData, session) {
   return output;
 }
 
-function extractArticulationFeatures(wavlmFeatures, sensitivityFactor = 1.0) {
+function extractArticulationFeatures(wavlmFeatures) {
   if (!linearModel) throw new Error('Linear model not loaded');
 
   const features = wavlmFeatures.data;
@@ -408,16 +406,13 @@ function extractArticulationFeatures(wavlmFeatures, sensitivityFactor = 1.0) {
     }
   }
 
-  const scale = sensitivityFactor;
-
-  // Map the 12 linear model outputs to named articulators
   const articulationFeatures = {
-    td: { x: output[0] * scale, y: output[1] * scale },
-    tb: { x: output[2] * scale, y: output[3] * scale },
-    tt: { x: output[4] * scale, y: output[5] * scale },
-    li: { x: output[6] * scale, y: output[7] * scale },
-    ul: { x: output[8] * scale, y: output[9] * scale },
-    ll: { x: output[10] * scale, y: output[11] * scale }
+    td: { x: output[0], y: output[1] },
+    tb: { x: output[2], y: output[3] },
+    tt: { x: output[4], y: output[5] },
+    li: { x: output[6], y: output[7] },
+    ul: { x: output[8], y: output[9] },
+    ll: { x: output[10], y: output[11] }
   };
 
   for (const [key, point] of Object.entries(articulationFeatures)) {
