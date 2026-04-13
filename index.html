@@ -84,9 +84,51 @@
         .btn { margin: 0 5px; font-weight: 500; }
         .btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
+        /* Calibration overlay */
+        #calibration-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 2000;
+            overflow-y: auto;
+        }
+        #calibration-panel {
+            max-width: 700px;
+            margin: 40px auto;
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+        }
+        #calibration-panel h2 { margin-bottom: 5px; }
+        #calibration-passage {
+            max-height: 300px;
+            overflow-y: auto;
+            padding: 15px;
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            font-size: 15px;
+            line-height: 1.7;
+            margin: 15px 0;
+        }
+        #calibration-progress {
+            height: 8px;
+            border-radius: 4px;
+            margin: 15px 0;
+        }
+        #calibration-status {
+            font-weight: 600;
+            font-size: 15px;
+            min-height: 24px;
+        }
+        .passage-selector { margin-bottom: 15px; }
+
         @media (max-width: 768px) {
             .controls { flex-direction: column; align-items: stretch; }
             #vocal-tract-svg { aspect-ratio: 1 / 1; }
+            #calibration-panel { margin: 20px 10px; }
         }
     </style>
 </head>
@@ -97,16 +139,9 @@
         </div>
 
         <div class="controls">
-            <div class="d-flex gap-2">
-                <button id="startButton" class="btn btn-success btn-lg" disabled>
-                    Start Recording
-                </button>
-                <button id="stopButton" class="btn btn-danger btn-lg" disabled>
-                    Stop
-                </button>
-            </div>
-
-            <div class="status-indicator" id="status">Loading models...</div>
+            <button id="calibrateButton" class="btn btn-primary btn-lg" disabled>
+                Calibrate
+            </button>
 
             <div class="d-flex gap-2 align-items-center">
                 <label class="mb-0">Test Sound:</label>
@@ -120,7 +155,18 @@
                 </select>
             </div>
 
-            <div class="control-group">
+            <div class="d-flex gap-2">
+                <button id="startButton" class="btn btn-success btn-lg" disabled>
+                    Start Recording
+                </button>
+                <button id="stopButton" class="btn btn-danger btn-lg" disabled>
+                    Stop
+                </button>
+            </div>
+
+            <div class="status-indicator" id="status">Loading models...</div>
+
+            <div class="control-group" style="margin-left:auto;">
                 <label for="smoothing-slider">
                     Smoothing: <span id="smoothing-value" class="slider-value">0.4</span>
                 </label>
@@ -132,6 +178,43 @@
         <div class="vocal-tract-container">
             <svg id="vocal-tract-svg" viewBox="-5 -5 9 9" preserveAspectRatio="xMidYMid meet">
             </svg>
+        </div>
+    </div>
+
+    <!-- Calibration overlay -->
+    <div id="calibration-overlay">
+        <div id="calibration-panel">
+            <h2>Calibration</h2>
+            <p class="text-muted">Read the passage below out loud, like you're reading a story to someone.</p>
+
+            <div class="passage-selector">
+                <label class="form-label fw-bold">Passage:</label>
+                <select id="passage-selector" class="form-select">
+                    <option value="peggy">Peggy Babcock (shorter, ~30 sec)</option>
+                    <option value="kingdom">Phonetic Kingdom (longer, ~3 min)</option>
+                </select>
+            </div>
+
+            <div id="calibration-passage"></div>
+
+            <div class="progress" id="calibration-progress" style="display:none;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+                     id="calibration-progress-bar" style="width: 0%"></div>
+            </div>
+
+            <div id="calibration-status" class="text-center"></div>
+
+            <div class="d-flex justify-content-center gap-3 mt-3">
+                <button id="calibration-start" class="btn btn-success btn-lg">
+                    Start Reading
+                </button>
+                <button id="calibration-done" class="btn btn-primary btn-lg" style="display:none;">
+                    Done Reading
+                </button>
+                <button id="calibration-cancel" class="btn btn-outline-secondary btn-lg">
+                    Cancel
+                </button>
+            </div>
         </div>
     </div>
 

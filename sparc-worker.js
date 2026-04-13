@@ -53,9 +53,44 @@ let processingStats = {
   avgProcessingTime: 0
 };
 
+// Running audio statistics for z-score normalization.
+// The Python pipeline normalizes the entire utterance at once. For real-time,
+// we accumulate mean and variance across the recording session so the
+// normalization converges toward full-utterance statistics.
+let audioStats = { count: 0, mean: 0, m2: 0 };
+
+function resetAudioStats() {
+  audioStats = { count: 0, mean: 0, m2: 0 };
+}
+
+function updateAudioStats(samples) {
+  for (let i = 0; i < samples.length; i++) {
+    audioStats.count++;
+    const delta = samples[i] - audioStats.mean;
+    audioStats.mean += delta / audioStats.count;
+    audioStats.m2 += delta * (samples[i] - audioStats.mean);
+  }
+}
+
+function getAudioStd() {
+  if (audioStats.count < 2) return 0;
+  return Math.sqrt(audioStats.m2 / audioStats.count);
+}
+
 /******************************************************************************
  * MESSAGE HANDLING
  ******************************************************************************/
+
+// Calibration accumulator: per-articulator EMA sums and frame count.
+let calibrationEma = null;
+
+function resetCalibrationEma() {
+  calibrationEma = {
+    count: 0,
+    sums: { td: {x:0,y:0}, tb: {x:0,y:0}, tt: {x:0,y:0},
+            li: {x:0,y:0}, ul: {x:0,y:0}, ll: {x:0,y:0} }
+  };
+}
 
 self.onmessage = async function(e) {
   const message = e.data;
@@ -68,6 +103,40 @@ self.onmessage = async function(e) {
     case 'process':
       await handleProcessMessage(message);
       break;
+    case 'reset_stats':
+      resetAudioStats();
+      break;
+    case 'calibrate':
+      await handleCalibrateMessage(message);
+      break;
+    case 'calibrate_start':
+      resetAudioStats();
+      resetCalibrationEma();
+      workerDebugLog('Calibration started: stats and EMA accumulator reset');
+      break;
+    case 'calibrate_finish': {
+      const result = {
+        audioStats: { count: audioStats.count, mean: audioStats.mean,
+                      std: getAudioStd() },
+        emaMeans: null
+      };
+      if (calibrationEma && calibrationEma.count > 0) {
+        const n = calibrationEma.count;
+        result.emaMeans = {};
+        for (const key of Object.keys(calibrationEma.sums)) {
+          result.emaMeans[key] = {
+            x: calibrationEma.sums[key].x / n,
+            y: calibrationEma.sums[key].y / n
+          };
+        }
+      }
+      workerDebugLog('Calibration finished', {
+        audioSamples: audioStats.count,
+        emaFrames: calibrationEma ? calibrationEma.count : 0
+      });
+      self.postMessage({ type: 'calibration_result', ...result });
+      break;
+    }
     default:
       workerDebugLog(`Unknown message type: ${message.type}`);
   }
@@ -127,6 +196,49 @@ async function handleProcessMessage(message) {
       error: `Processing failed: ${error.message}`,
       stats: processingStats
     });
+  }
+}
+
+async function handleCalibrateMessage(message) {
+  if (!initialized) {
+    self.postMessage({ type: 'error', error: 'Worker not initialized' });
+    return;
+  }
+
+  try {
+    let audioData;
+    if (message.audio instanceof Float32Array) {
+      audioData = message.audio;
+    } else {
+      audioData = new Float32Array(message.audio);
+    }
+
+    const deviceSampleRate = message.deviceSampleRate || 16000;
+    if (deviceSampleRate !== 16000) {
+      audioData = resampleTo16k(audioData, deviceSampleRate);
+    }
+
+    if (!validateAudioData(audioData)) return;
+
+    const wavlmOutput = await extractWavLMFeatures(audioData, wavlmSession);
+    if (!wavlmOutput) return;
+
+    const emaFeatures = extractArticulationFeatures(wavlmOutput);
+    if (!emaFeatures || !calibrationEma) return;
+
+    calibrationEma.count++;
+    for (const key of Object.keys(calibrationEma.sums)) {
+      calibrationEma.sums[key].x += emaFeatures[key].x;
+      calibrationEma.sums[key].y += emaFeatures[key].y;
+    }
+
+    self.postMessage({
+      type: 'calibration_progress',
+      frames: calibrationEma.count,
+      audioSamples: audioStats.count
+    });
+  } catch (error) {
+    workerDebugLog(`Calibration processing error: ${error.message}`);
   }
 }
 
@@ -361,17 +473,13 @@ async function extractWavLMFeatures(audioData, session) {
     rawData[i] = audioData[i];
   }
 
-  // Z-score normalization: wav = (wav - mean) / std
-  let sum = 0;
-  for (let i = 0; i < baseLength; i++) sum += rawData[i];
-  const mean = sum / baseLength;
+  // Update running statistics with this window's audio
+  updateAudioStats(rawData);
 
-  let sqSum = 0;
-  for (let i = 0; i < baseLength; i++) {
-    const d = rawData[i] - mean;
-    sqSum += d * d;
-  }
-  const std = Math.sqrt(sqSum / baseLength);
+  // Z-score normalization using running mean/std accumulated across the
+  // recording session (matches Python's full-utterance normalization).
+  const mean = audioStats.mean;
+  const std = getAudioStd();
 
   if (std > 1e-8) {
     for (let i = 0; i < baseLength; i++) {

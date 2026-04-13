@@ -7,7 +7,7 @@
  * Depends on global state from app.js:
  *   smoothedFeatures, featureHistory, debugCounters,
  *   smoothingFactor, isRecording, animationRunning, animationFrame,
- *   DISPLAY_MIN, DISPLAY_MAX,
+ *   DISPLAY_MIN, DISPLAY_MAX, MNGU0_STATS, emaToDisplay,
  *   scaleToDisplay, clampToDisplay, updateFeatureHistory,
  *   calculateJawOpening, updateStatus, debugLog
  ******************************************************************************/
@@ -182,14 +182,10 @@ function stopAnimation() {
 }
 
 function initializeDefaultPositions() {
-  const defaultPositions = {
-    ul: { x: 1.5, y: -0.3 },
-    ll: { x: 1.3, y: 0.3 },
-    li: { x: 0.8, y: 0.5 },
-    tt: { x: 0.5, y: 0.6 },
-    tb: { x: -0.5, y: -0.3 },
-    td: { x: -1.5, y: -0.2 }
-  };
+  const defaultPositions = {};
+  for (const key of ['ul', 'll', 'li', 'tt', 'tb', 'td']) {
+    defaultPositions[key] = emaToDisplay(key, 0, 0);
+  }
 
   Object.keys(defaultPositions).forEach(art => {
     smoothedFeatures[art + '_x'] = scaleToDisplay(defaultPositions[art].x);
@@ -210,41 +206,33 @@ function initializeDefaultPositions() {
   }
 }
 
-// Approximate MNGU0 EMA z-scored coordinates for vowel demo positions.
-// MNGU0 axes: +x = anterior (toward lips), +y = inferior (downward).
-// Constraints from real EMA data (see COMPARISON.md):
-//   - UL is the most anterior (highest x); tongue articulators are behind lips
-//   - TT y >= LI y for vowels (tongue tip rests at or below lower incisor)
-//   - TB and TD vertical position varies with vowel height
-//   - Typical range: roughly -3 to +3 (z-scored)
-// These positions are for the UI demo only and do not affect model output.
-const VOWEL_POSITIONS = {
-  'i': {
-    ul: {x: 2.0, y: -0.4}, ll: {x: 1.8, y: 0.0}, li: {x: 1.2, y: 0.2},
-    tt: {x: 0.8, y: 0.3},  tb: {x: -0.5, y: -1.5}, td: {x: -1.5, y: -1.0},
-    jaw_opening: 0.15
-  },
-  'e': {
-    ul: {x: 1.8, y: -0.3}, ll: {x: 1.6, y: 0.5}, li: {x: 1.0, y: 0.6},
-    tt: {x: 0.6, y: 0.6},  tb: {x: -0.5, y: -0.8}, td: {x: -1.5, y: -0.3},
-    jaw_opening: 0.4
-  },
-  'a': {
-    ul: {x: 1.5, y: -0.3}, ll: {x: 1.3, y: 1.8}, li: {x: 0.8, y: 2.0},
-    tt: {x: 0.3, y: 2.2},  tb: {x: -0.8, y: 1.0},  td: {x: -2.0, y: 0.3},
-    jaw_opening: 0.9
-  },
-  'o': {
-    ul: {x: 0.8, y: -0.6}, ll: {x: 0.6, y: 0.5}, li: {x: 0.2, y: 0.8},
-    tt: {x: -0.3, y: 0.9}, tb: {x: -1.8, y: -0.8}, td: {x: -2.5, y: -0.5},
-    jaw_opening: 0.5
-  },
-  'u': {
-    ul: {x: 0.5, y: -0.6}, ll: {x: 0.3, y: -0.1}, li: {x: -0.1, y: 0.1},
-    tt: {x: -0.5, y: 0.2}, tb: {x: -2.0, y: -1.8}, td: {x: -2.8, y: -1.5},
-    jaw_opening: 0.15
-  }
+// Vowel z-scores (approximate articulatory targets in MNGU0 z-scored space).
+// Converted to display coordinates via emaToDisplay() at load time so they
+// share the same MNGU0-based transform as live model output.
+const VOWEL_Z_SCORES = {
+  'i': { td:{x: 1.0,y: 1.5}, tb:{x: 1.0,y: 1.5}, tt:{x: 0.5,y: 0.5},
+         li:{x: 0,  y: 0.5}, ul:{x: 0,  y: 0},    ll:{x: 0,  y: 0.5} },
+  'e': { td:{x: 0.5,y: 0.5}, tb:{x: 0.5,y: 0.5}, tt:{x: 0.3,y: 0},
+         li:{x: 0,  y:-0.3}, ul:{x: 0,  y: 0},    ll:{x: 0,  y:-0.3} },
+  'a': { td:{x:-0.5,y:-1.5}, tb:{x:-0.3,y:-1.0}, tt:{x:-0.5,y:-1.0},
+         li:{x: 0,  y:-1.5}, ul:{x: 0,  y: 0.3},  ll:{x: 0,  y:-1.5} },
+  'o': { td:{x:-1.0,y: 0.5}, tb:{x:-0.8,y: 0.3}, tt:{x:-0.3,y:-0.3},
+         li:{x: 0,  y:-0.5}, ul:{x: 0.5,y:-0.3},  ll:{x: 0.5,y:-0.5} },
+  'u': { td:{x:-1.0,y: 1.5}, tb:{x:-0.8,y: 1.0}, tt:{x:-0.3,y: 0.3},
+         li:{x: 0,  y: 0.3}, ul:{x: 0.5,y:-0.3},  ll:{x: 0.5,y: 0.3} }
 };
+
+const VOWEL_POSITIONS = {};
+for (const [vowel, zScores] of Object.entries(VOWEL_Z_SCORES)) {
+  VOWEL_POSITIONS[vowel] = {};
+  for (const key of ['ul', 'll', 'li', 'tt', 'tb', 'td']) {
+    VOWEL_POSITIONS[vowel][key] = emaToDisplay(key, zScores[key].x, zScores[key].y);
+  }
+  const ulY = VOWEL_POSITIONS[vowel].ul.y;
+  const llY = VOWEL_POSITIONS[vowel].ll.y;
+  VOWEL_POSITIONS[vowel].jaw_opening = Math.min(1, Math.max(0,
+    (Math.abs(llY - ulY) - 1.5) / 3));
+}
 
 function testArticulatorAnimation() {
   const vowelSequence = ['i', 'a', 'u'];
