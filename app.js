@@ -95,7 +95,7 @@ function scaleToDisplay(value) {
 function updateStatus(message) {
   const el = document.getElementById('status');
   if (!el) return;
-  el.textContent = 'Status: ' + message;
+  el.textContent = message;
 
   if (message.includes('ERROR') || message.includes('CRITICAL')) {
     el.style.backgroundColor = '#ffebee';
