@@ -91,6 +91,12 @@ async function handleProcessMessage(message) {
     }
 
     const config = message.config;
+    const deviceSampleRate = message.deviceSampleRate || 16000;
+
+    if (deviceSampleRate !== 16000) {
+      audioData = resampleTo16k(audioData, deviceSampleRate);
+    }
+
     if (!validateAudioData(audioData)) {
       throw new Error('Invalid audio data received');
     }
@@ -147,6 +153,24 @@ function validateAudioData(audioData) {
   }
 
   return isFinite(max) && isFinite(min) && isFinite(rms);
+}
+
+/**
+ * Resample audio from deviceRate to 16 kHz using linear interpolation.
+ * WavLM expects 16 kHz; browsers often provide 44100 or 48000 Hz.
+ */
+function resampleTo16k(audioData, fromRate) {
+  const ratio = fromRate / 16000;
+  const outLength = Math.round(audioData.length / ratio);
+  const out = new Float32Array(outLength);
+  for (let i = 0; i < outLength; i++) {
+    const srcIdx = i * ratio;
+    const lo = Math.floor(srcIdx);
+    const hi = Math.min(lo + 1, audioData.length - 1);
+    const frac = srcIdx - lo;
+    out[i] = audioData[lo] * (1 - frac) + audioData[hi] * frac;
+  }
+  return out;
 }
 
 /******************************************************************************

@@ -15,9 +15,10 @@
  * CONFIGURATION
  ******************************************************************************/
 const config = {
-  sampleRate: 16000,
+  targetSampleRate: 16000, // WavLM expects 16 kHz
+  deviceSampleRate: null,  // set at recording time from AudioContext
   frameSize: 512,
-  bufferSize: 16000,       // 1 second circular buffer
+  bufferSize: 16000,       // 1 second circular buffer (resized at recording time)
   updateInterval: 200,     // ms between extraction requests
   extractPitchFn: 2        // 1 = raw YIN, 2 = median-smoothed YIN
 };
@@ -235,6 +236,20 @@ async function initSparcWorker() {
   });
 }
 
+// Display offsets: approximate mean anatomical positions for each articulator.
+// The model outputs z-scored values (mean=0, std=1) per feature, so each
+// articulator's "zero" is its own average position, not a shared origin.
+// These offsets restore approximate inter-articulator spatial relationships
+// for display without altering the model output.
+const ARTICULATOR_OFFSETS = {
+  ul: { x:  1.8, y: -0.3 },
+  ll: { x:  1.5, y:  0.3 },
+  li: { x:  1.0, y:  0.5 },
+  tt: { x:  0.3, y:  0.3 },
+  tb: { x: -0.5, y: -0.2 },
+  td: { x: -1.2, y: -0.3 }
+};
+
 function handleWorkerFeatures(message) {
   pendingWorkerResponses = Math.max(0, pendingWorkerResponses - 1);
   debugCounters.workerResponsesReceived++;
@@ -252,9 +267,12 @@ function handleWorkerFeatures(message) {
           typeof articulationFeatures[key].y !== 'number') {
         throw new Error(`Invalid articulation feature: ${key}`);
       }
+      articulationFeatures[key].x += ARTICULATOR_OFFSETS[key].x;
+      articulationFeatures[key].y += ARTICULATOR_OFFSETS[key].y;
     }
 
     updateFeatureHistory(articulationFeatures, pitch || 0, loudness || -60);
+    updateStatus('Recording...');
     debugCounters.featuresUpdated++;
 
     requestAnimationFrame(() => {
@@ -273,6 +291,18 @@ function handleWorkerFeatures(message) {
  * FEATURE EXTRACTION LOOP
  ******************************************************************************/
 
+// Minimum RMS energy (linear) to consider audio as speech.
+// Silence / background noise is typically below -40 dB ≈ 0.01 linear RMS.
+const SPEECH_ENERGY_THRESHOLD = 0.01;
+
+function audioHasSpeechEnergy(audio) {
+  let sumSq = 0;
+  for (let i = 0; i < audio.length; i++) {
+    sumSq += audio[i] * audio[i];
+  }
+  return Math.sqrt(sumSq / audio.length) >= SPEECH_ENERGY_THRESHOLD;
+}
+
 async function extractFeaturesLoop() {
   if (!isRecording) return;
   setTimeout(extractFeaturesLoop, config.updateInterval);
@@ -288,6 +318,11 @@ async function extractFeaturesLoop() {
     const recentAudio = getRecentAudioBuffer();
     if (!recentAudio || recentAudio.length === 0) return;
 
+    if (!audioHasSpeechEnergy(recentAudio)) {
+      updateStatus('Listening... (speak into microphone)');
+      return;
+    }
+
     const timeoutId = setTimeout(() => {
       if (workerResponseTimeouts.has(timeoutId)) {
         pendingWorkerResponses = Math.max(0, pendingWorkerResponses - 1);
@@ -301,7 +336,8 @@ async function extractFeaturesLoop() {
     SparcWorker.postMessage({
       type: 'process',
       audio: new Float32Array(recentAudio),
-      config: config
+      config: config,
+      deviceSampleRate: config.deviceSampleRate || config.targetSampleRate
     });
 
     pendingWorkerResponses++;
@@ -399,7 +435,7 @@ async function startRecording() {
 
     audioStream = await navigator.mediaDevices.getUserMedia({
       audio: {
-        sampleRate: config.sampleRate,
+        sampleRate: config.targetSampleRate,
         channelCount: 1,
         echoCancellation: true,
         noiseSuppression: true
@@ -407,9 +443,16 @@ async function startRecording() {
     });
 
     audioContext = new (window.AudioContext || window.webkitAudioContext)({
-      sampleRate: config.sampleRate
+      sampleRate: config.targetSampleRate
     });
-    debugLog(`Audio context: ${audioContext.sampleRate} Hz`);
+
+    config.deviceSampleRate = audioContext.sampleRate;
+    config.bufferSize = audioContext.sampleRate; // 1 second at device rate
+    audioBuffer = new Float32Array(config.bufferSize);
+    audioBufferIndex = 0;
+    debugLog(`Audio context: ${audioContext.sampleRate} Hz` +
+      (audioContext.sampleRate !== config.targetSampleRate
+        ? ` (will resample to ${config.targetSampleRate} Hz)` : ''));
 
     if (audioContext.audioWorklet) {
       const blob = new Blob([audioProcessorCode], { type: 'application/javascript' });
