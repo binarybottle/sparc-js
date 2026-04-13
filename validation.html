@@ -327,8 +327,8 @@
                 
                 worker.postMessage({
                     type: 'init',
-                    onnxPath: 'models/wavlm_large_layer9_quantized.onnx?v=v2',
-                    linearModelPath: 'models/wavlm_linear_model.json?v=v2'
+                    onnxPath: 'models/wavlm_large_layer9.onnx?v=v3',
+                    linearModelPath: 'models/wavlm_linear_model.json?v=v3'
                 });
             });
         }
@@ -401,21 +401,21 @@
         
         // Compare features
         function compareFeatures(pythonData, jsFeatures) {
-            const featureNames = ['ul_x', 'ul_y', 'll_x', 'll_y', 'li_x', 'li_y', 
-                                  'tt_x', 'tt_y', 'tb_x', 'tb_y', 'td_x', 'td_y'];
+            const featureNames = ['td_x', 'td_y', 'tb_x', 'tb_y', 'tt_x', 'tt_y',
+                                  'li_x', 'li_y', 'ul_x', 'ul_y', 'll_x', 'll_y'];
             
             // Get Python middle frame (both process 1 second, extract middle frame)
             const pyFrame = pythonData.ema.middle_frame;
             console.log(`Comparing Python frame ${pythonData.ema.frame_index}/${pythonData.ema.total_frames} with JavaScript output`);
             
-            // Convert JS features to array
+            // Convert JS features to array (matching Python SPARC order: TD,TB,TT,LI,UL,LL)
             const jsArray = [
-                jsFeatures.ul.x, jsFeatures.ul.y,
-                jsFeatures.ll.x, jsFeatures.ll.y,
-                jsFeatures.li.x, jsFeatures.li.y,
-                jsFeatures.tt.x, jsFeatures.tt.y,
+                jsFeatures.td.x, jsFeatures.td.y,
                 jsFeatures.tb.x, jsFeatures.tb.y,
-                jsFeatures.td.x, jsFeatures.td.y
+                jsFeatures.tt.x, jsFeatures.tt.y,
+                jsFeatures.li.x, jsFeatures.li.y,
+                jsFeatures.ul.x, jsFeatures.ul.y,
+                jsFeatures.ll.x, jsFeatures.ll.y
             ];
             
             // Calculate differences
@@ -470,7 +470,7 @@
             const labels = {
                 'ul': 'Upper Lip',
                 'll': 'Lower Lip',
-                'li': 'Lip Interface',
+                'li': 'Lower Incisor',
                 'tt': 'Tongue Tip',
                 'tb': 'Tongue Body',
                 'td': 'Tongue Dorsum'

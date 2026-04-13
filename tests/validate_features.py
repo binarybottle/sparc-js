@@ -176,8 +176,8 @@ def save_validation_data(features, output_path):
     if features['ema'] is not None:
         data['ema_features'] = {
             'num_features': features['ema'].shape[1],
-            'feature_names': ['ul_x', 'ul_y', 'll_x', 'll_y', 'li_x', 'li_y', 
-                             'tt_x', 'tt_y', 'tb_x', 'tb_y', 'td_x', 'td_y'],
+            'feature_names': ['td_x', 'td_y', 'tb_x', 'tb_y', 'tt_x', 'tt_y',
+                             'li_x', 'li_y', 'ul_x', 'ul_y', 'll_x', 'll_y'],
             # Full EMA sequence for comparison
             'all_frames': features['ema'].tolist(),
             # Statistics
@@ -242,8 +242,8 @@ def main():
         print(f"EMA features: {ema.shape}")
         print("\nEMA Statistics (per articulator):")
         print("-" * 50)
-        names = ['ul_x', 'ul_y', 'll_x', 'll_y', 'li_x', 'li_y', 
-                 'tt_x', 'tt_y', 'tb_x', 'tb_y', 'td_x', 'td_y']
+        names = ['td_x', 'td_y', 'tb_x', 'tb_y', 'tt_x', 'tt_y',
+                 'li_x', 'li_y', 'ul_x', 'ul_y', 'll_x', 'll_y']
         for i, name in enumerate(names):
             print(f"  {name:6s}: mean={ema[:,i].mean():7.4f}, std={ema[:,i].std():6.4f}, "
                   f"range=[{ema[:,i].min():7.4f}, {ema[:,i].max():7.4f}]")
@@ -251,6 +251,8 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
 
 
 

@@ -31,8 +31,8 @@ def convert_linear_model_to_json(pkl_path, json_path):
     # Add metadata
     model_json['metadata'] = {
         'description': 'Linear projection model for SPARC articulatory features',
-        'features': ['ul_x', 'ul_y', 'll_x', 'll_y', 'li_x', 'li_y', 
-                     'tt_x', 'tt_y', 'tb_x', 'tb_y', 'td_x', 'td_y'],
+        'features': ['td_x', 'td_y', 'tb_x', 'tb_y', 'tt_x', 'tt_y',
+                     'li_x', 'li_y', 'ul_x', 'ul_y', 'll_x', 'll_y'],
         'created_from': os.path.basename(pkl_path)
     }
     

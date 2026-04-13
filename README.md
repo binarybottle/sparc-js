@@ -1,107 +1,82 @@
-# sparc-js
-JavaScript port of Speech Articulatory Coding (SPARC)
+# SPARC-JS
 
-## Speech Articulatory Coding (JavaScript version)
+Browser-based real-time extraction and visualization of speech articulatory
+features. This is a JavaScript port of the feature extraction pipeline from
+[Speech-Articulatory-Coding](https://github.com/cheoljun95/Speech-Articulatory-Coding)
+(SPARC).
 
-This project provides a browser-based real-time, JavaScript implementation 
-of the Berkeley Speech Group's software Speech Articulatory Coding (SPARC), 
-using a 9-layer, quantized, ONNX version of the WavLM-base model. 
+## Pipeline
 
-This implementation enables researchers, linguists, and speech technologists to visualize articulator movements during live speech in a web browser without requiring specialized software installation.
+1. **Audio capture** — Microphone input via Web Audio API (`AudioWorklet`)
+   at 16 kHz, with z-score normalization and 160-sample zero-padding.
+2. **WavLM inference** — Layer 9 hidden states (1024-dim) from a
+   full-precision (FP32) ONNX model, run via ONNX Runtime Web (WASM backend).
+3. **Linear projection** — Learned linear map from 1024-dim hidden states to
+   12 EMA (electromagnetic articulography) channels in the MNGU0 coordinate
+   space: tongue dorsum, tongue body, tongue tip, lower incisor, upper lip,
+   and lower lip (x, y each).
+4. **Visualization** — Six colored markers on an SVG grid, plus pitch,
+   loudness, and jaw-opening bar displays.
 
-- https://github.com/binarybottle/sparc-js.git
-- Author: Arno Klein (arnoklein.info)
-- License: MIT License (see LICENSE)
+The FP32 ONNX model produces output that is numerically identical to the
+original PyTorch model (average difference < 0.00001). See
+[COMPARISON.md](COMPARISON.md) for detailed accuracy data.
 
-### Background
+## Deviations from the Python pipeline
 
-- **Article**: 
-  - C. J. Cho, P. Wu, T. S. Prabhune, D. Agarwal and G. K. Anumanchipalli, "Coding Speech Through Vocal Tract Kinematics," in IEEE Journal of Selected Topics in Signal Processing, vol. 18, no. 8, pp. 1427-1440, Dec. 2024, doi: 10.1109/JSTSP.2024.3497655. 
-    - JSTSP: https://ieeexplore.ieee.org/document/10759573
-    - arXiv: https://arxiv.org/abs/2406.12998
-  
-- **Original Python code**: 
-  - https://github.com/Berkeley-Speech-Group/Speech-Articulatory-Coding
-- **Original models**:
-  - wavlm-large: https://huggingface.co/microsoft/wavlm-large
-  - wavlm-base: https://huggingface.co/microsoft/wavlm-base
-  - wavlm_large-9_cut-10_mngu_linear.pkl: https://huggingface.co/cheoljun95/Speech-Articulatory-Coding/tree/main
+- **No hidden-state filtering.** Python applies a 5th-order Butterworth
+  low-pass filter (`scipy.signal.filtfilt`) to WavLM hidden states. This is
+  omitted because `filtfilt` cannot be faithfully reproduced without scipy,
+  and approximate substitutes worsened accuracy.
+- **Pitch detection** uses YIN (Python uses CREPE or PENN).
+- **Loudness** uses RMS-to-dB (Python uses amplitude pooling).
+- **Frame selection** uses the second-to-last frame for lower latency
+  (Python uses the middle frame for offline analysis).
 
-### What's Included
+## File structure
 
-This JavaScript port implements the core feature extraction pipeline from the original Python codebase:
+```
+app.js                  Core: audio capture, worker management, feature loop
+visualization.js        Visualization: SVG markers, demo animation, controls
+sparc-worker.js         Web Worker: WavLM + linear model inference, YIN pitch
+index.html              Main application page
+validation.html         Standalone page for comparing JS output with Python
+server.py               Local HTTP server with CORS headers
 
-1. **Audio Capture**: Real-time microphone input processing using AudioWorklet
-2. **WavLM Processing**: Running a quantized WavLM model via ONNX Runtime Web
-3. **Linear Projection**: Converting WavLM features to articulatory coordinates
-4. **Feature Extraction**:
-   - Articulator positions (Upper Lip, Lower Lip, Lower Incisor, Tongue Tip, Tongue Blade, Tongue Dorsum)
-   - Source features (pitch, loudness)
-5. **Visualization**:
-   - X coordinates over time (front/back movement)
-   - Y coordinates over time (up/down movement)
-   - 2D positional visualization with trace lines
-   - Numerical displays of all feature values
+models/
+  wavlm_large_layer9.onnx        WavLM Large layer 9 (FP32, ~483 MB)
+  wavlm_linear_model.json        Linear projection weights (from pickle)
 
-### Processing Pipeline
+prep/                             Model conversion scripts
+  convert_linear_model_pkl2json/  Pickle-to-JSON converter + source .pkl
+  convert_pytorch2onnx/           PyTorch-to-ONNX export (Docker)
+  convert_pytorch2onnx_truncate9layers_quantize.py
+  convert_wavlm_large_to_onnx.py
 
-Audio Recording (microphone)
-↓
-processAudioData() → Stores audio in circular buffer
-↓
-extractFeaturesLoop() → Main feature extraction loop
-↓
-extractWavLMFeatures() → WavLM model processing
-↓
-filterWavLMFeatures() → Apply Butterworth filtering
-↓
-extractArticulationFeatures() → Apply linear projection to get articulatory features
-↓
-extractPitch() / extractPitchSmoothed() → YIN algorithm for pitch detection
-↓
-calculateLoudness() → Compute audio loudness
-↓
-updateFeatureHistory() → Adds new values to history arrays (100 frames per feature)
-↓
-updateFeatureUI() → Updates text displays
-↓
-updateCharts() → Updates the visualization charts
+tests/
+  validate_features.py            Python ground truth extraction
+  python_features.json            Cached Python features for sample1.wav
+  sample1.wav                     Test audio file
+```
 
+## Requirements
 
-### What's Not Ported from Python SPARC
+- A modern browser (Chrome, Firefox, Edge) with microphone access
+- Python 3 (only for `server.py`; no Python packages needed at runtime)
 
-This browser version focuses specifically on real-time feature extraction and visualization. The following components from the Python version are not included:
+## Usage
 
-1. **Speech Synthesis**: The HiFiGAN generator for speech synthesis is not implemented
-2. **Speaker Encoding**: The speaker embedding functionality is not included
-3. **Voice Conversion**: The voice transformation capabilities are omitted
-4. **External Package Dependencies**: No need for torchcrepe, librosa, or other Python dependencies
+```bash
+python3 server.py
+```
 
-### Technical Implementation
+Open `http://localhost:8000` in a browser. The ~483 MB WavLM model will load
+on first visit (cached by the browser afterward). Click **Start Recording**
+and speak to see articulatory features in real time.
 
-- **Audio Processing**: Uses Web Audio API with AudioWorklet for efficient processing
-- **Model Inference**: ONNX Runtime Web for running the WavLM model
-- **Pitch Detection**: Custom implementation of the YIN algorithm
-- **Signal Processing**: JavaScript implementation of Butterworth filters
-- **Visualization**: Chart.js for interactive visualizations
+## Upstream references
 
-### Requirements
-
-- A modern web browser that supports:
-  - Web Audio API with AudioWorklet
-  - WebAssembly (for ONNX Runtime)
-- Models directory containing:
-  - `wavlm_base_layer9_quantized.onnx`: Truncated and quantized WavLM model
-  - `wavlm_linear_model.json`: Linear projection weights converted from the original .pkl file
-
-### Usage
-
-1. Host the files on a web server (HTTPS recommended for microphone access)
-2. Visit the page in a compatible browser
-3. Click "Start Recording" to begin capturing and visualizing speech features in real-time
-
-Run locally:
-1. python3 server.py
-2. Visit [http://localhost:8000/](http://localhost:8000/) in a compatible browser
-3. Click "Start Recording" to begin capturing and visualizing speech features in real-time
-
+- Paper: [Speech Articulatory Coding](https://arxiv.org/abs/2206.11394)
+- Python code: https://github.com/cheoljun95/Speech-Articulatory-Coding
+- WavLM: https://huggingface.co/microsoft/wavlm-large
+- Linear model: https://huggingface.co/cheoljun95/Speech-Articulatory-Coding

@@ -1,8 +1,8 @@
 #*
 .#*
-.github
+.github/
 .DS_Store
-models/large/
+.venv/
 
 .ipynb_checkpoints/
 .vscode/
