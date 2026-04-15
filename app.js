@@ -23,8 +23,9 @@ const config = {
   targetSampleRate: 16000, // WavLM expects 16 kHz
   deviceSampleRate: null,  // set at recording time from AudioContext
   frameSize: 512,
-  bufferSize: 16000,       // 1 second circular buffer (resized at recording time)
-  updateInterval: 200,     // ms between extraction requests
+  bufferDuration: 0.5,     // seconds of audio to buffer before sending to worker
+  bufferSize: 8000,        // = targetSampleRate * bufferDuration (resized at recording time)
+  updateInterval: 100,     // ms between extraction requests
   extractPitchFn: 2        // 1 = raw YIN, 2 = median-smoothed YIN
 };
 
@@ -589,7 +590,7 @@ async function startCalibration() {
     });
 
     config.deviceSampleRate = calibrationAudioContext.sampleRate;
-    config.bufferSize = calibrationAudioContext.sampleRate;
+    config.bufferSize = Math.floor(calibrationAudioContext.sampleRate * config.bufferDuration);
     audioBuffer = new Float32Array(config.bufferSize);
     audioBufferIndex = 0;
 
@@ -769,7 +770,7 @@ async function startSetRefCapture() {
     });
 
     config.deviceSampleRate = setRefAudioContext.sampleRate;
-    config.bufferSize = setRefAudioContext.sampleRate;
+    config.bufferSize = Math.floor(setRefAudioContext.sampleRate * config.bufferDuration);
     audioBuffer = new Float32Array(config.bufferSize);
     audioBufferIndex = 0;
 
@@ -979,7 +980,7 @@ async function startRecording() {
     });
 
     config.deviceSampleRate = audioContext.sampleRate;
-    config.bufferSize = audioContext.sampleRate; // 1 second at device rate
+    config.bufferSize = Math.floor(audioContext.sampleRate * config.bufferDuration);
     audioBuffer = new Float32Array(config.bufferSize);
     audioBufferIndex = 0;
     debugLog(`Audio context: ${audioContext.sampleRate} Hz` +

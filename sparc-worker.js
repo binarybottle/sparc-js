@@ -584,7 +584,7 @@ const F1_MAX_HZ = 1000;
 const F1_ENERGY_FLOOR = 1e-4;  // skip silence / very quiet frames
 
 let f1History = [];
-const F1_HISTORY_LEN = 3;
+const F1_HISTORY_LEN = 1;
 
 function estimateF1(audioData, sampleRate) {
   const windowSize = Math.min(Math.floor(sampleRate * F1_WINDOW_SEC), audioData.length);

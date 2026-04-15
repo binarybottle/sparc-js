@@ -54,6 +54,43 @@ original PyTorch model (average difference < 0.00001). See
 - **Live Recording** — Real-time marker positions from model inference
   (tongue/LI) and F1 estimation (lips).
 
+## Sound type limitations
+
+The visualization is designed for **vowel-focused** clinical assessment:
+
+- **Vowels (/i/, /e/, /a/, /o/, /u/)** — Best supported. Reference tongue
+  shapes come from articulatory phonetics; lip opening tracks F1 reliably.
+- **Diphthongs (/aɪ/, /oʊ/, /aʊ/)** — F1 tracks the vowel-to-vowel
+  transition smoothly. Tongue markers show movement but there are no
+  diphthong-specific reference targets.
+- **Consonants** — The model captures some tongue movement (e.g., for /t/,
+  /k/, /s/), but there are no consonant reference targets. During voiceless
+  consonants (/p/, /t/, /k/, /f/, /s/), F1 estimation returns zero (no
+  voicing), driving lips toward a closed position. Nasals (/m/, /n/) produce
+  a low F1 (~250 Hz), which also shows as closed — approximately correct.
+- **Connected speech** — The SPARC model was trained on continuous speech, so
+  tongue markers respond to running speech better than to isolated sustained
+  sounds. Lip opening via F1 works well for any voiced segment.
+
+## Latency
+
+End-to-end latency from speech to marker update has four components:
+
+| Source | Default | Notes |
+|--------|---------|-------|
+| Audio buffer | 500 ms | Audio accumulated before sending to worker (`bufferDuration`) |
+| Extraction interval | 100 ms | Polling interval between extraction requests (`updateInterval`) |
+| WavLM inference | 200–800 ms | ONNX model processing time (hardware-dependent, WASM backend) |
+| Display smoothing | ~10 ms | Exponential smoothing on marker positions (`smoothingFactor`) |
+
+**Typical perceived lag: ~0.6–1.2 seconds.** The largest factors are the
+audio buffer and model inference time. To reduce latency further:
+
+- Switch to the ONNX Runtime **WebGPU backend** (2–5x faster inference on
+  machines with a GPU).
+- Reduce `bufferDuration` below 0.5s (trades stability for speed; WavLM
+  needs sufficient context for meaningful output).
+
 ## File structure
 
 ```
