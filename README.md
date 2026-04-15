@@ -5,7 +5,18 @@ features. This is a JavaScript port of the feature extraction pipeline from
 [Speech-Articulatory-Coding](https://github.com/cheoljun95/Speech-Articulatory-Coding)
 (SPARC).
 
-## Pipeline
+There are two versions of the app:
+
+| | **Model version** (`index.html`) | **Formant version** (`formant.html`) |
+|---|---|---|
+| Lip positions | F1-driven | F1-driven |
+| Tongue/LI positions | SPARC model z-scores | F1+F2 bilinear interpolation |
+| Model download | ~483 MB WavLM ONNX | None |
+| Startup time | 10–30 s | < 1 s |
+| Per-frame latency | 200–800 ms (WavLM inference) | < 5 ms (LPC only) |
+| Calibration | Yes (recenters model output) | No |
+
+## Pipeline (model version)
 
 1. **Audio capture** — Microphone input via Web Audio API (`AudioWorklet`)
    at 16 kHz, with z-score normalization and 160-sample zero-padding.
@@ -16,20 +27,24 @@ features. This is a JavaScript port of the feature extraction pipeline from
    space: tongue dorsum, tongue body, tongue tip, lower incisor, upper lip,
    and lower lip (x, y each).
 4. **F1 estimation** — LPC-based first formant frequency estimation (in the
-   worker), used to drive lip vertical separation since the model's lip
-   channels lack sufficient vowel differentiation.
-5. **Visualization** — Six colored markers on an SVG grid representing
-   tongue (TD, TB, TT), lower incisor (LI), and lips (UL, LL).
-
-Tongue and LI positions are driven by the model's z-scores with
-per-articulator-group display scales. Lip vertical positions (mouth
-opening) are driven by F1, not the model's UL/LL output. See
-[MNGU0_COORDINATES.md](MNGU0_COORDINATES.md) for the full display
-transform.
+   worker), used to drive lip vertical separation.
+5. **Visualization** — Six colored markers on an SVG grid. Tongue and LI
+   positions come from the model's z-scores; lip vertical positions from F1.
 
 The FP32 ONNX model produces output that is numerically identical to the
 original PyTorch model (average difference < 0.00001). See
 [COMPARISON.md](COMPARISON.md) for detailed accuracy data.
+
+## Pipeline (formant version)
+
+1. **Audio capture** — Same as model version (AudioWorklet at 16 kHz).
+2. **Formant estimation** — LPC-based F1 and F2 estimation. F1 drives lip
+   vertical separation; F1+F2 together drive tongue and LI positions via
+   bilinear interpolation between corner vowels (/i/, /a/, /u/).
+3. **Visualization** — Same six markers, same SVG grid.
+
+No ML model is loaded. All positions are derived from acoustic features.
+See [MNGU0_COORDINATES.md](MNGU0_COORDINATES.md) for the display transform.
 
 ## Deviations from the Python pipeline
 
@@ -45,14 +60,16 @@ original PyTorch model (average difference < 0.00001). See
 ## Features
 
 - **Set References** — A normal speaker dictates individual vowels; the app
-  captures speaker-specific F1 values and saves them to `localStorage` for
-  persistent reference targets.
-- **Calibrate** — Reads a passage aloud to collect per-speaker audio
-  normalization statistics and per-articulator mean z-scores.
-- **Test Sounds** — Displays phonetically-motivated reference positions for
-  /i/, /e/, /a/, /o/, /u/ with correct tongue shapes and F1-driven lip gaps.
-- **Live Recording** — Real-time marker positions from model inference
-  (tongue/LI) and F1 estimation (lips).
+  captures speaker-specific formant values and saves them to `localStorage`
+  for persistent reference targets. Model version captures F1; formant
+  version captures F1 and F2.
+- **Calibrate** (model version only) — Reads a passage aloud to collect
+  per-speaker audio normalization statistics and per-articulator mean
+  z-scores.
+- **Test Sounds** — Displays reference positions for /i/, /e/, /a/, /o/, /u/.
+- **Live Recording** — Real-time marker positions from the model (tongue)
+  and F1 (lips) in the model version, or from F1+F2 (all articulators) in
+  the formant version.
 
 ## Sound type limitations
 
@@ -63,46 +80,59 @@ The visualization is designed for **vowel-focused** clinical assessment:
 - **Diphthongs (/aɪ/, /oʊ/, /aʊ/)** — F1 tracks the vowel-to-vowel
   transition smoothly. Tongue markers show movement but there are no
   diphthong-specific reference targets.
-- **Consonants** — The model captures some tongue movement (e.g., for /t/,
-  /k/, /s/), but there are no consonant reference targets. During voiceless
-  consonants (/p/, /t/, /k/, /f/, /s/), F1 estimation returns zero (no
-  voicing), driving lips toward a closed position. Nasals (/m/, /n/) produce
-  a low F1 (~250 Hz), which also shows as closed — approximately correct.
-- **Connected speech** — The SPARC model was trained on continuous speech, so
-  tongue markers respond to running speech better than to isolated sustained
-  sounds. Lip opening via F1 works well for any voiced segment.
+- **Consonants** — During voiceless consonants (/p/, /t/, /k/, /f/, /s/),
+  F1 estimation returns zero (no voicing), driving lips toward a closed
+  position. Nasals (/m/, /n/) produce a low F1 (~250 Hz), which also shows
+  as closed — approximately correct.
+- **Connected speech** — The formant approach works well for sustained vowels.
+  The model version may capture more coarticulation dynamics during running
+  speech.
 
 ## Latency
 
-End-to-end latency from speech to marker update has four components:
+### Model version
 
 | Source | Default | Notes |
 |--------|---------|-------|
-| Audio buffer | 500 ms | Audio accumulated before sending to worker (`bufferDuration`) |
-| Extraction interval | 100 ms | Polling interval between extraction requests (`updateInterval`) |
-| WavLM inference | 200–800 ms | ONNX model processing time (hardware-dependent, WASM backend) |
-| Display smoothing | ~10 ms | Exponential smoothing on marker positions (`smoothingFactor`) |
+| Audio buffer | 500 ms | `bufferDuration` |
+| Extraction interval | 100 ms | `updateInterval` |
+| WavLM inference | 200–800 ms | Hardware-dependent (WASM backend) |
+| Display smoothing | ~10 ms | Exponential smoothing |
 
-**Typical perceived lag: ~0.6–1.2 seconds.** The largest factors are the
-audio buffer and model inference time. To reduce latency further:
+**Typical perceived lag: ~0.6–1.2 seconds.**
 
-- Switch to the ONNX Runtime **WebGPU backend** (2–5x faster inference on
-  machines with a GPU).
-- Reduce `bufferDuration` below 0.5s (trades stability for speed; WavLM
-  needs sufficient context for meaningful output).
+### Formant version
+
+| Source | Default | Notes |
+|--------|---------|-------|
+| Audio buffer | 500 ms | `bufferDuration` |
+| Extraction interval | 100 ms | `updateInterval` |
+| LPC + YIN | < 5 ms | Very fast |
+| Display smoothing | ~10 ms | Exponential smoothing |
+
+**Typical perceived lag: ~0.5–0.6 seconds.** No model inference bottleneck.
 
 ## File structure
 
 ```
-app.js                  Core: audio capture, worker management, display
-                        transform, F1-to-lip mapping, calibration, Set References
-visualization.js        Visualization: SVG markers, demo animation, vowel
+index.html              Model version: WavLM + F1 lips
+formant.html            Formant version: F1 lips + F1/F2 tongue (no model)
+
+app.js                  Model version: audio capture, worker management,
+                        display transform, F1 lip mapping, calibration,
+                        Set References
+app-formant.js          Formant version: audio capture, formant-to-articulator
+                        mapping, Set References (no model, no calibration)
+
+sparc-worker.js         Model worker: WavLM + linear model inference,
+                        LPC F1/F2 estimation, YIN pitch detection
+formant-worker.js       Formant worker: LPC F1/F2 estimation, YIN pitch
+                        detection (no ONNX, instant startup)
+
+visualization.js        Shared: SVG markers, demo animation, vowel
                         reference positions, controls
-sparc-worker.js         Web Worker: WavLM + linear model inference, LPC F1
-                        estimation, YIN pitch detection
-index.html              Main application page
-validation.html         Standalone page for comparing JS output with Python
 server.py               Local HTTP server with CORS headers
+validation.html         Standalone page for comparing JS output with Python
 
 models/
   wavlm_large_layer9.onnx        WavLM Large layer 9 (FP32, ~483 MB)
@@ -134,9 +164,12 @@ tests/                            Offline analysis tools (not used at runtime)
 python3 server.py
 ```
 
-Open `http://localhost:8000` in a browser. The ~483 MB WavLM model will load
-on first visit (cached by the browser afterward). Click **Start Recording**
-and speak to see articulatory features in real time.
+- **Model version:** Open `http://localhost:8000` — loads the ~483 MB WavLM
+  model (cached by the browser afterward).
+- **Formant version:** Open `http://localhost:8000/formant.html` — no model
+  download, ready instantly.
+
+Click **Start Recording** and speak to see articulatory features in real time.
 
 ## Upstream references
 

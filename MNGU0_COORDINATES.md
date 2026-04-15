@@ -18,7 +18,12 @@ The SPARC linear model outputs EMA (Electromagnetic Articulography) features in 
 
 ## Display Transform
 
-The display maps model z-scores to SVG coordinates using per-articulator center positions and **per-articulator-group scales**. Different groups use different scales because their z-scores represent different physical magnitudes.
+There are two versions of the app:
+
+- **Model version** (`index.html`): Tongue/LI positions come from the model's z-scores. Lip positions are F1-driven.
+- **Formant version** (`formant.html`): All positions are formant-driven (F1 for lips, F1+F2 for tongue/LI). No ML model.
+
+Both versions map z-scores to SVG coordinates using per-articulator center positions and **per-articulator-group scales**. Different groups use different scales because their z-scores represent different physical magnitudes.
 
 ### Articulator Centers (SVG coordinates at z-score = 0)
 
@@ -35,20 +40,26 @@ The display maps model z-scores to SVG coordinates using per-articulator center 
 
 | Group | x scale | y scale | Notes |
 |-------|---------|---------|-------|
-| Tongue (TD, TB, TT) | 0.8 | 1.2 | Large scale — tongue has wide physical range |
-| Lower incisor (LI) | 0.5 | 1.0 | Moderate — tracks jaw movement |
+| Tongue (TD, TB, TT) | 0.8 | 1.2 | Used for phonetic z-score → SVG mapping |
+| Lower incisor (LI) | 0.5 | 1.0 | Used for phonetic z-score → SVG mapping |
 | Lips (UL, LL) | 0.0 | 0.0 | Model z-scores not used; lip y is F1-driven |
 
-### Mapping formula (tongue and LI)
+### Mapping formula
 
 ```
 svg_x = center_x + z_x × x_scale
 svg_y = center_y − z_y × y_scale     (flipped: MNGU0 +y = up, SVG +y = down)
 ```
 
-### F1-driven lip positioning
+### Formant-driven articulator positioning
 
-The model's UL/LL z-scores don't differentiate vowels well enough for clinical use (the upper lip physically moves only ~1 mm, and the model captures very little variation). Instead, lip vertical separation is driven by **F1 (first formant frequency)**, estimated via LPC in the web worker:
+The model's raw EMA z-scores don't differentiate vowels well enough for
+real-time clinical display. All articulator positions are instead driven by
+**formant frequencies** estimated via LPC in the web worker.
+
+#### F1-driven lips
+
+F1 (first formant) correlates strongly with mouth opening:
 
 - F1 ≈ 250 Hz → lips nearly closed (high vowels like /i/, /u/)
 - F1 ≈ 650 Hz → mouth wide open (low vowels like /a/)
@@ -56,23 +67,50 @@ The model's UL/LL z-scores don't differentiate vowels well enough for clinical u
 
 Lip x-positions are fixed at their centers (`x = 3.0`).
 
+#### F1+F2-driven tongue and LI
+
+F1 correlates with tongue height and F2 (second formant) with tongue
+front-back position. Together they define the vowel space. Tongue and LI
+z-scores are computed by **bilinear interpolation** between three corner
+vowels in (F1, F2) space:
+
+| Corner | F1 (Hz) | F2 (Hz) | Tongue shape |
+|--------|---------|---------|--------------|
+| /i/ (high-front) | 270 | 2300 | TB bunched high and front |
+| /a/ (low-central) | 730 | 1090 | Tongue flat and low |
+| /u/ (high-back) | 300 | 870 | TD raised high in back |
+
+The interpolation normalizes F1 to a height parameter (0 = high, 1 = low)
+and F2 to a frontness parameter (0 = back, 1 = front):
+
+```
+height   = clamp01((F1 − 250) / (650 − 250))
+frontness = clamp01((F2 − 800) / (2400 − 800))
+```
+
+At height = 0, tongue z-scores interpolate between /u/ (front = 0) and /i/
+(front = 1). At height = 1, tongue z-scores are fixed at /a/ regardless
+of frontness. Between these extremes, linear interpolation applies. The
+resulting z-scores are then mapped to SVG via the standard display scales
+above.
+
 ## Reference Vowel Positions
 
-Test sound markers use **phonetically-motivated z-scores** (defined in `VOWEL_Z_SCORES` in `visualization.js`) that reflect known articulatory patterns from EMA literature:
+Test sound markers use formant-driven positions. `VOWEL_Z_SCORES` in `visualization.js` stores both phonetically-motivated z-scores (used as corner-vowel anchors for the bilinear interpolation) and canonical F1/F2 values:
 
-| Vowel | Tongue shape | F1 (Hz) |
-|-------|-------------|---------|
-| /i/   | TB bunched high and front (TB is peak) | 270 |
-| /e/   | Similar to /i/ but less extreme | 530 |
-| /a/   | Tongue flat and low throughout | 730 |
-| /o/   | Tongue body raised in back, moderate | 570 |
-| /u/   | TD raised high in back (TD is peak) | 300 |
+| Vowel | F1 (Hz) | F2 (Hz) | Tongue shape |
+|-------|---------|---------|--------------|
+| /i/   | 270     | 2300    | TB bunched high and front |
+| /e/   | 530     | 1840    | Similar to /i/ but less extreme |
+| /a/   | 730     | 1090    | Tongue flat and low |
+| /o/   | 570     | 880     | Tongue body raised in back |
+| /u/   | 300     | 870     | TD raised high in back |
 
-These are **not** derived from the SPARC model's output on synthetic audio. The `tests/` directory contains scripts and data from earlier model-output extraction, retained as offline analysis tools.
+The `tests/` directory contains earlier model-output extraction scripts, retained as offline analysis tools.
 
 ## Set References
 
-The in-app "Set References" feature captures a speaker saying each vowel. From the captured audio, only the **speaker-specific F1** is saved (stored in `localStorage` under `sparc-reference-positions`). Tongue and LI reference positions always use the phonetically-motivated defaults, since the model's tongue channels don't reliably differentiate tongue shapes across vowels.
+The in-app "Set References" feature captures a speaker saying each vowel. From the captured audio, **speaker-specific F1 and F2** are saved (stored in `localStorage` under `sparc-reference-positions`). These formant values drive all articulator positions for reference markers: F1 for lips, F1+F2 for tongue/LI.
 
 ## Calibration
 

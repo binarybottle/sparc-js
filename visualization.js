@@ -2,19 +2,21 @@
  * SPARC Visualization - Vocal Tract Display
  *
  * Renders articulatory feature positions as colored markers on an SVG grid.
- * Manages phonetically-motivated vowel reference positions (VOWEL_Z_SCORES),
- * demo animation, test sound display, and smoothing controls.
+ * Manages vowel reference positions (VOWEL_Z_SCORES), demo animation, test
+ * sound display, and smoothing controls.
  *
- * Reference tongue/LI positions come from EMA literature (not from the
- * model). Reference lip positions are driven by F1 (canonical or captured
- * via Set References). See MNGU0_COORDINATES.md for the full display transform.
+ * Shared by both index.html (model-based, app.js) and formant.html
+ * (formant-only, app-formant.js). When formantsToTongueZScores is available
+ * (formant version), test sound tongue positions use F1+F2 interpolation.
+ * Otherwise, phonetically-motivated z-scores are used directly.
  *
- * Depends on global state from app.js:
+ * Depends on global state from app.js or app-formant.js:
  *   smoothedFeatures, featureHistory, debugCounters,
  *   smoothingFactor, isRecording, animationRunning, animationFrame,
  *   DISPLAY_MIN, DISPLAY_MAX, ARTICULATOR_CENTERS, DISPLAY_SCALES,
  *   emaToDisplay, f1ToLipPositions, scaleToDisplay, clampToDisplay,
  *   updateFeatureHistory, calculateJawOpening, updateStatus, debugLog
+ * Optional (formant version only): formantsToTongueZScores
  ******************************************************************************/
 
 /******************************************************************************
@@ -223,31 +225,47 @@ function initializeDefaultPositions() {
 // (Peterson & Barney, 1952).
 const VOWEL_Z_SCORES = {
   'i': { td:{x:-0.3,y: 0.5}, tb:{x: 0.5,y: 1.5}, tt:{x: 0.8,y: 0.8},
-         li:{x: 0.0,y: 1.0}, ul:{x:0,y:0}, ll:{x:0,y:0}, _f1: 270 },
+         li:{x: 0.0,y: 1.0}, ul:{x:0,y:0}, ll:{x:0,y:0}, _f1: 270, _f2: 2300 },
   'e': { td:{x:-0.2,y: 0.2}, tb:{x: 0.3,y: 0.8}, tt:{x: 0.5,y: 0.4},
-         li:{x: 0.0,y: 0.3}, ul:{x:0,y:0}, ll:{x:0,y:0}, _f1: 530 },
+         li:{x: 0.0,y: 0.3}, ul:{x:0,y:0}, ll:{x:0,y:0}, _f1: 530, _f2: 1840 },
   'a': { td:{x:-0.2,y:-1.2}, tb:{x: 0.0,y:-1.0}, tt:{x: 0.2,y:-0.5},
-         li:{x: 0.0,y:-1.0}, ul:{x:0,y:0}, ll:{x:0,y:0}, _f1: 730 },
+         li:{x: 0.0,y:-1.0}, ul:{x:0,y:0}, ll:{x:0,y:0}, _f1: 730, _f2: 1090 },
   'o': { td:{x:-0.5,y: 0.3}, tb:{x:-0.3,y: 0.2}, tt:{x: 0.0,y:-0.2},
-         li:{x: 0.0,y:-0.3}, ul:{x:0,y:0}, ll:{x:0,y:0}, _f1: 570 },
+         li:{x: 0.0,y:-0.3}, ul:{x:0,y:0}, ll:{x:0,y:0}, _f1: 570, _f2: 880 },
   'u': { td:{x:-0.8,y: 1.0}, tb:{x:-0.5,y: 0.8}, tt:{x:-0.2,y: 0.2},
-         li:{x: 0.0,y: 0.8}, ul:{x:0,y:0}, ll:{x:0,y:0}, _f1: 300 }
+         li:{x: 0.0,y: 0.8}, ul:{x:0,y:0}, ll:{x:0,y:0}, _f1: 300, _f2: 870 }
 };
 
 let VOWEL_POSITIONS = {};
 function rebuildVowelPositions(zScoresMap) {
   for (const [vowel, zScores] of Object.entries(zScoresMap)) {
     VOWEL_POSITIONS[vowel] = {};
-    for (const key of ['ul', 'll', 'li', 'tt', 'tb', 'td']) {
+
+    const f1 = zScores._f1 || 0;
+    const f2 = zScores._f2 || 0;
+
+    // Tongue + LI: formant-driven if both F1 and F2 available
+    if (f1 > 0 && f2 > 0 && typeof formantsToTongueZScores === 'function') {
+      const tongueZ = formantsToTongueZScores(f1, f2);
+      for (const key of ['li', 'tt', 'tb', 'td']) {
+        VOWEL_POSITIONS[vowel][key] = emaToDisplay(key, tongueZ[key].x, tongueZ[key].y);
+      }
+    } else {
+      for (const key of ['li', 'tt', 'tb', 'td']) {
+        VOWEL_POSITIONS[vowel][key] = emaToDisplay(key, zScores[key].x, zScores[key].y);
+      }
+    }
+
+    // Lips: F1-driven
+    for (const key of ['ul', 'll']) {
       VOWEL_POSITIONS[vowel][key] = emaToDisplay(key, zScores[key].x, zScores[key].y);
     }
-    // Use F1 to drive lip vertical positions when available
-    const f1 = zScores._f1 || 0;
     if (f1 > 0) {
       const lip = f1ToLipPositions(f1);
       VOWEL_POSITIONS[vowel].ul.y = lip.ulY;
       VOWEL_POSITIONS[vowel].ll.y = lip.llY;
     }
+
     const ulY = VOWEL_POSITIONS[vowel].ul.y;
     const llY = VOWEL_POSITIONS[vowel].ll.y;
     VOWEL_POSITIONS[vowel].jaw_opening = Math.min(1, Math.max(0,
@@ -258,10 +276,9 @@ rebuildVowelPositions(VOWEL_Z_SCORES);
 
 /**
  * Apply learned references from Set References or localStorage.
- * Tongue and LI positions always come from the phonetically-motivated
- * VOWEL_Z_SCORES (the model's tongue channels don't differentiate shapes
- * well enough). Only the speaker-specific F1 value is taken from the
- * learned data, since F1 is an acoustically reliable signal.
+ * Speaker-specific F1 and F2 are used to drive lip and tongue/LI
+ * positions. Tongue/LI use the same formant-driven interpolation as
+ * live recording for consistency.
  */
 function applyLearnedReferences(refs) {
   for (const [vowel, articulators] of Object.entries(refs)) {
@@ -269,17 +286,32 @@ function applyLearnedReferences(refs) {
     const base = VOWEL_Z_SCORES[vowel];
 
     VOWEL_POSITIONS[vowel] = {};
-    for (const key of ['ul', 'll', 'li', 'tt', 'tb', 'td']) {
-      VOWEL_POSITIONS[vowel][key] = emaToDisplay(key, base[key].x, base[key].y);
+
+    const f1 = (articulators._f1 && articulators._f1 > 0) ? articulators._f1 : (base._f1 || 0);
+    const f2 = (articulators._f2 && articulators._f2 > 0) ? articulators._f2 : (base._f2 || 0);
+
+    // Tongue + LI: formant-driven
+    if (f1 > 0 && f2 > 0 && typeof formantsToTongueZScores === 'function') {
+      const tongueZ = formantsToTongueZScores(f1, f2);
+      for (const key of ['li', 'tt', 'tb', 'td']) {
+        VOWEL_POSITIONS[vowel][key] = emaToDisplay(key, tongueZ[key].x, tongueZ[key].y);
+      }
+    } else {
+      for (const key of ['li', 'tt', 'tb', 'td']) {
+        VOWEL_POSITIONS[vowel][key] = emaToDisplay(key, base[key].x, base[key].y);
+      }
     }
 
-    // Use speaker-specific F1 if captured, otherwise fall back to canonical
-    const f1 = (articulators._f1 && articulators._f1 > 0) ? articulators._f1 : (base._f1 || 0);
+    // Lips: F1-driven
+    for (const key of ['ul', 'll']) {
+      VOWEL_POSITIONS[vowel][key] = emaToDisplay(key, base[key].x, base[key].y);
+    }
     if (f1 > 0) {
       const lip = f1ToLipPositions(f1);
       VOWEL_POSITIONS[vowel].ul.y = lip.ulY;
       VOWEL_POSITIONS[vowel].ll.y = lip.llY;
     }
+
     const ulY = VOWEL_POSITIONS[vowel].ul.y;
     const llY = VOWEL_POSITIONS[vowel].ll.y;
     VOWEL_POSITIONS[vowel].jaw_opening = Math.min(1, Math.max(0,

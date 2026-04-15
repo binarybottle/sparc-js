@@ -183,7 +183,8 @@ async function handleProcessMessage(message) {
       articulationFeatures: result.articulationFeatures,
       pitch: result.pitch || 0,
       loudness: result.loudness || -60,
-      f1: result.f1 || 0
+      f1: result.f1 || 0,
+      f2: result.f2 || 0
     });
 
     const processingTime = performance.now() - startTime;
@@ -449,18 +450,20 @@ async function processAudioWithModels(audioData, config) {
 
   let pitch = 0;
   let loudness = -60;
-  let f1 = 0;
+  let f1 = 0, f2 = 0;
   try {
     pitch = config.extractPitchFn === 2
       ? extractPitchSmoothed(audioData)
       : extractPitch(audioData);
     loudness = calculateLoudness(audioData);
-    f1 = estimateF1Smoothed(audioData, 16000);
+    const formants = estimateFormants(audioData, 16000);
+    f1 = formants.f1;
+    f2 = formants.f2;
   } catch (e) {
-    workerDebugLog(`Pitch/loudness/F1 error: ${e.message}`);
+    workerDebugLog(`Pitch/loudness/formant error: ${e.message}`);
   }
 
-  return { articulationFeatures, pitch, loudness, f1 };
+  return { articulationFeatures, pitch, loudness, f1, f2 };
 }
 
 function calculateLoudness(audioData) {
@@ -574,30 +577,27 @@ function extractArticulationFeatures(wavlmFeatures) {
  *   /i/ ≈ 270 Hz (closed), /a/ ≈ 730 Hz (open), /u/ ≈ 300 Hz (closed).
  ******************************************************************************/
 
-// Lower LPC order produces a smoother spectral envelope where true formant
-// peaks stand out (order 18 was creating spurious peaks that masked F1).
-const F1_LPC_ORDER = 10;
-const F1_WINDOW_SEC = 0.050;   // 50 ms window — captures more pitch periods
-const F1_NFFT = 1024;          // finer frequency resolution (≈15.6 Hz/bin)
-const F1_MIN_HZ = 200;
-const F1_MAX_HZ = 1000;
-const F1_ENERGY_FLOOR = 1e-4;  // skip silence / very quiet frames
+// LPC order 12 balances spectral smoothness (fewer spurious peaks) with
+// enough resolution to separate F1 and F2 across the 200-2500 Hz range.
+const FORMANT_LPC_ORDER = 18;
+const FORMANT_WINDOW_SEC = 0.050;
+const FORMANT_NFFT = 1024;
+const FORMANT_MIN_HZ = 200;
+const FORMANT_F1_MAX_HZ = 1000;
+const FORMANT_F2_MAX_HZ = 2500;
+const FORMANT_ENERGY_FLOOR = 1e-4;
 
-let f1History = [];
-const F1_HISTORY_LEN = 1;
-
-function estimateF1(audioData, sampleRate) {
-  const windowSize = Math.min(Math.floor(sampleRate * F1_WINDOW_SEC), audioData.length);
-  if (windowSize < 128) return 0;
+function estimateFormants(audioData, sampleRate) {
+  const windowSize = Math.min(Math.floor(sampleRate * FORMANT_WINDOW_SEC), audioData.length);
+  if (windowSize < 128) return { f1: 0, f2: 0 };
   const start = Math.floor((audioData.length - windowSize) / 2);
 
-  // Energy gate — don't estimate on silence
   let energy = 0;
   for (let i = 0; i < windowSize; i++) {
     energy += audioData[start + i] * audioData[start + i];
   }
   energy /= windowSize;
-  if (energy < F1_ENERGY_FLOOR) return 0;
+  if (energy < FORMANT_ENERGY_FLOOR) return { f1: 0, f2: 0 };
 
   // Pre-emphasis + Hamming window
   const windowed = new Float64Array(windowSize);
@@ -608,16 +608,16 @@ function estimateF1(audioData, sampleRate) {
   }
 
   // Autocorrelation
-  const order = Math.min(F1_LPC_ORDER, windowSize - 1);
+  const order = Math.min(FORMANT_LPC_ORDER, windowSize - 1);
   const r = new Float64Array(order + 1);
   for (let k = 0; k <= order; k++) {
     let sum = 0;
     for (let i = 0; i < windowSize - k; i++) sum += windowed[i] * windowed[i + k];
     r[k] = sum;
   }
-  if (r[0] < 1e-10) return 0;
+  if (r[0] < 1e-10) return { f1: 0, f2: 0 };
 
-  // Levinson-Durbin recursion → LPC coefficients
+  // Levinson-Durbin recursion
   const a = new Float64Array(order + 1);
   const prev = new Float64Array(order + 1);
   a[0] = 1;
@@ -629,55 +629,63 @@ function estimateF1(audioData, sampleRate) {
     prev.set(a);
     for (let j = 0; j <= i; j++) a[j] = prev[j] + lambda * prev[i - j];
     err *= (1 - lambda * lambda);
-    if (err <= 0) return 0;
+    if (err <= 0) return { f1: 0, f2: 0 };
   }
 
-  // LPC power spectrum (evaluate 1/|A(f)|^2)
-  const halfFFT = F1_NFFT / 2;
+  // LPC power spectrum
+  const halfFFT = FORMANT_NFFT / 2;
   const spectrum = new Float64Array(halfFFT);
   for (let k = 0; k < halfFFT; k++) {
     let re = 1, im = 0;
     for (let i = 1; i <= order; i++) {
-      const angle = -2 * Math.PI * i * k / F1_NFFT;
+      const angle = -2 * Math.PI * i * k / FORMANT_NFFT;
       re += a[i] * Math.cos(angle);
       im += a[i] * Math.sin(angle);
     }
     spectrum[k] = 1.0 / (re * re + im * im + 1e-12);
   }
 
-  // Find all local peaks in [F1_MIN_HZ, F1_MAX_HZ], pick the strongest
-  const minBin = Math.ceil(F1_MIN_HZ * F1_NFFT / sampleRate);
-  const maxBin = Math.min(Math.floor(F1_MAX_HZ * F1_NFFT / sampleRate), halfFFT - 2);
+  // Collect all spectral peaks in [200, 2500] Hz, sorted by frequency
+  const minBin = Math.ceil(FORMANT_MIN_HZ * FORMANT_NFFT / sampleRate);
+  const maxBin = Math.min(Math.floor(FORMANT_F2_MAX_HZ * FORMANT_NFFT / sampleRate), halfFFT - 2);
+  const f1MaxBin = Math.floor(FORMANT_F1_MAX_HZ * FORMANT_NFFT / sampleRate);
 
-  let bestBin = -1;
-  let bestVal = -Infinity;
+  const peaks = [];
   for (let k = minBin + 1; k <= maxBin; k++) {
-    if (spectrum[k] > spectrum[k - 1] && spectrum[k] > spectrum[k + 1] && spectrum[k] > bestVal) {
-      bestVal = spectrum[k];
-      bestBin = k;
+    if (spectrum[k] > spectrum[k - 1] && spectrum[k] > spectrum[k + 1]) {
+      peaks.push({ bin: k, val: spectrum[k] });
     }
   }
-  if (bestBin < 0) return 0;
+  if (peaks.length === 0) return { f1: 0, f2: 0 };
 
-  // Parabolic interpolation for sub-bin precision
-  if (bestBin > 0 && bestBin < halfFFT - 1) {
-    const y0 = spectrum[bestBin - 1], y1 = spectrum[bestBin], y2 = spectrum[bestBin + 1];
+  // F1 = strongest peak at or below 1000 Hz
+  let f1Bin = -1, f1Val = -Infinity;
+  for (const p of peaks) {
+    if (p.bin <= f1MaxBin && p.val > f1Val) { f1Val = p.val; f1Bin = p.bin; }
+  }
+
+  // F2 = strongest peak above F1 + 200 Hz gap
+  let f2Bin = -1, f2Val = -Infinity;
+  const gapBins = Math.ceil(200 * FORMANT_NFFT / sampleRate);
+  const f2MinBin = f1Bin > 0 ? f1Bin + gapBins : Math.ceil(800 * FORMANT_NFFT / sampleRate);
+  for (const p of peaks) {
+    if (p.bin >= f2MinBin && p.val > f2Val) { f2Val = p.val; f2Bin = p.bin; }
+  }
+
+  function binToHz(bin) {
+    if (bin <= 0 || bin >= halfFFT - 1) return bin > 0 ? bin * sampleRate / FORMANT_NFFT : 0;
+    const y0 = spectrum[bin - 1], y1 = spectrum[bin], y2 = spectrum[bin + 1];
     const denom = 2 * (2 * y1 - y0 - y2);
     if (Math.abs(denom) > 1e-12) {
-      const delta = (y0 - y2) / denom;
-      return (bestBin + delta) * sampleRate / F1_NFFT;
+      return (bin + (y0 - y2) / denom) * sampleRate / FORMANT_NFFT;
     }
+    return bin * sampleRate / FORMANT_NFFT;
   }
-  return bestBin * sampleRate / F1_NFFT;
-}
 
-function estimateF1Smoothed(audioData, sampleRate) {
-  const raw = estimateF1(audioData, sampleRate);
-  f1History.push(raw);
-  if (f1History.length > F1_HISTORY_LEN) f1History.shift();
-  // Include zeros so silence/transitions flush old values quickly
-  const sorted = [...f1History].sort((a, b) => a - b);
-  return sorted[Math.floor(sorted.length / 2)];
+  return {
+    f1: f1Bin > 0 ? binToHz(f1Bin) : 0,
+    f2: f2Bin > 0 ? binToHz(f2Bin) : 0
+  };
 }
 
 /******************************************************************************

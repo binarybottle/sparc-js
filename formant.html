@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SPARC Formant — No Model</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+        .container { max-width: 100%; }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin: 0 0 15px 0;
+            padding: 10px 20px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .status-indicator {
+            font-weight: bold;
+            padding: 8px 14px;
+            background: #e9ecef;
+            border-radius: 5px;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+
+        .control-group {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            min-width: 110px;
+        }
+        .control-group label {
+            font-size: 12px;
+            color: #666;
+            font-weight: 500;
+        }
+        .slider { width: 110px; margin: 3px 0; }
+        .slider-value { font-weight: bold; color: #333; }
+
+        .vocal-tract-container {
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            padding: 15px;
+        }
+
+        #vocal-tract-svg {
+            width: 100%;
+            height: auto;
+            aspect-ratio: 1 / 1;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+        }
+
+        .articulator-marker {
+            opacity: 1;
+            transition: cx 0.1s ease-out, cy 0.1s ease-out;
+            cursor: pointer;
+        }
+        .articulator-marker:hover { filter: brightness(1.2); }
+        #reference-grid { pointer-events: none; }
+        #vocal-tract-svg text {
+            font-family: Arial, sans-serif;
+        }
+        #vocal-tract-svg text.grid-label {
+            font-size: 0.25px;
+            fill: #888;
+            text-anchor: middle;
+        }
+
+        .btn { margin: 0 5px; font-weight: 500; }
+        .btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+        /* Set-references overlay */
+        #setref-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.6);
+            z-index: 2000;
+            overflow-y: auto;
+        }
+        #setref-panel {
+            max-width: 500px;
+            margin: 60px auto;
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.3);
+            text-align: center;
+        }
+        #setref-panel h2 { margin-bottom: 5px; }
+        #setref-vowel-label {
+            font-size: 48px;
+            font-weight: bold;
+            color: #0d47a1;
+            margin: 20px 0 5px;
+        }
+        #setref-vowel-desc {
+            font-size: 16px;
+            color: #666;
+            margin-bottom: 15px;
+        }
+        #setref-progress-bar-container {
+            height: 8px;
+            border-radius: 4px;
+            margin: 15px 0;
+        }
+        #setref-status {
+            font-weight: 600;
+            font-size: 15px;
+            min-height: 24px;
+        }
+
+        @media (max-width: 768px) {
+            .controls { flex-direction: column; align-items: stretch; }
+            #vocal-tract-svg { aspect-ratio: 1 / 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="text-center mb-3">
+            <h1 class="display-5 text-success">SPARC <small class="text-muted fs-4">Formant</small></h1>
+        </div>
+
+        <div class="controls">
+            <button id="setRefButton" class="btn btn-info btn-lg">
+                Set References
+            </button>
+
+            <div class="d-flex gap-2 align-items-center">
+                <label class="mb-0">Test Sound:</label>
+                <select id="sound-selector" class="form-select" style="width: auto;">
+                    <option value="">-- Select --</option>
+                    <option value="i">/i/ "ee" (high front)</option>
+                    <option value="e">/e/ "eh" (mid front)</option>
+                    <option value="a">/a/ "ah" (low open)</option>
+                    <option value="o">/o/ "oh" (mid back)</option>
+                    <option value="u">/u/ "oo" (high back)</option>
+                </select>
+            </div>
+
+            <div class="d-flex gap-2">
+                <button id="startButton" class="btn btn-success btn-lg" disabled>
+                    Start Recording
+                </button>
+                <button id="stopButton" class="btn btn-danger btn-lg" disabled>
+                    Stop
+                </button>
+            </div>
+
+            <div class="status-indicator" id="status">Initializing...</div>
+
+            <div class="control-group" style="margin-left:auto;">
+                <label for="smoothing-slider">
+                    Smoothing: <span id="smoothing-value" class="slider-value">0.4</span>
+                </label>
+                <input type="range" id="smoothing-slider" class="form-range slider"
+                       min="0.1" max="0.9" step="0.1" value="0.4">
+            </div>
+        </div>
+
+        <div class="vocal-tract-container">
+            <svg id="vocal-tract-svg" viewBox="-5 -5 9 9" preserveAspectRatio="xMidYMid meet">
+            </svg>
+        </div>
+    </div>
+
+    <!-- Set References overlay -->
+    <div id="setref-overlay">
+        <div id="setref-panel">
+            <h2>Set Reference Sounds</h2>
+            <p class="text-muted">A normal speaker says each vowel to establish target positions.</p>
+
+            <div id="setref-vowel-label"></div>
+            <div id="setref-vowel-desc"></div>
+
+            <div class="progress" id="setref-progress-bar-container" style="display:none;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated bg-info"
+                     id="setref-progress-bar" style="width: 0%"></div>
+            </div>
+
+            <div id="setref-status"></div>
+
+            <div class="d-flex justify-content-center gap-3 mt-3">
+                <button id="setref-start" class="btn btn-success btn-lg">
+                    Start
+                </button>
+                <button id="setref-next" class="btn btn-info btn-lg" style="display:none;">
+                    Next Sound
+                </button>
+                <button id="setref-cancel" class="btn btn-outline-secondary btn-lg">
+                    Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="app-formant.js"></script>
+    <script src="visualization.js"></script>
+</body>
+</html>
