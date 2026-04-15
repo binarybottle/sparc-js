@@ -2,13 +2,18 @@
  * SPARC Feature Extraction - Web Client
  *
  * Captures microphone audio, sends it to the SPARC web worker for feature
- * extraction, and exposes the resulting articulatory features for visualization.
+ * extraction, and maps articulatory features to display coordinates.
  *
  * Architecture:
  *   AudioWorklet (or ScriptProcessor fallback) -> circular buffer
  *   -> periodic extraction loop sends 1 s of audio to sparc-worker.js
- *   -> worker returns 6 articulator (x,y) pairs, pitch, and loudness
+ *   -> worker returns 6 articulator (x,y) z-scores, pitch, loudness, and F1
+ *   -> tongue/LI z-scores are mapped to SVG via per-group DISPLAY_SCALES
+ *   -> lip y-positions are driven by F1 (first formant) instead of z-scores
  *   -> features are smoothed and stored in featureHistory for display
+ *
+ * Also manages: calibration, Set References (speaker-specific F1 capture),
+ * and test sound selection.
  ******************************************************************************/
 
 /******************************************************************************
@@ -340,15 +345,9 @@ function handleWorkerFeatures(message) {
 
     const { articulationFeatures, pitch, loudness, f1 } = message;
 
-    // Collect raw z-scores + F1 for set-references mode before any transform
+    // Collect F1 for set-references mode (only F1 is used from captures)
     if (setRefCapturing) {
-      const rawFrame = { f1: f1 || 0 };
-      for (const key of ['ul', 'll', 'li', 'tt', 'tb', 'td']) {
-        if (articulationFeatures[key]) {
-          rawFrame[key] = { x: articulationFeatures[key].x, y: articulationFeatures[key].y };
-        }
-      }
-      setRefFrames.push(rawFrame);
+      setRefFrames.push({ f1: f1 || 0 });
     }
 
     for (const key of ['ul', 'll', 'li', 'tt', 'tb', 'td']) {
@@ -840,28 +839,15 @@ function finishCurrentVowel() {
     return;
   }
 
-  const avg = {};
-  for (const key of ['ul', 'll', 'li', 'tt', 'tb', 'td']) {
-    let sx = 0, sy = 0, n = 0;
-    for (const frame of setRefFrames) {
-      if (frame[key] && isFinite(frame[key].x) && isFinite(frame[key].y)) {
-        sx += frame[key].x;
-        sy += frame[key].y;
-        n++;
-      }
-    }
-    avg[key] = n > 0 ? { x: sx / n, y: sy / n } : { x: 0, y: 0 };
-  }
-
-  // Average F1 across captured frames
+  // Only F1 is used from captured references (tongue/LI use phonetic defaults)
   let f1Sum = 0, f1Count = 0;
   for (const frame of setRefFrames) {
     if (frame.f1 && frame.f1 > 0) { f1Sum += frame.f1; f1Count++; }
   }
-  avg._f1 = f1Count > 0 ? f1Sum / f1Count : 0;
+  const result = { _f1: f1Count > 0 ? f1Sum / f1Count : 0 };
 
-  setRefResults[vowel.id] = avg;
-  debugLog(`Reference captured for /${vowel.id}/`, { frames: setRefFrames.length, avg });
+  setRefResults[vowel.id] = result;
+  debugLog(`Reference captured for /${vowel.id}/`, { frames: setRefFrames.length, f1: result._f1 });
 
   setRefVowelIndex++;
   setRefFrames = [];

@@ -4,7 +4,11 @@
  * Extracts speech articulatory features from audio using:
  *   1. WavLM (layer 9, FP32 ONNX) for frame-wise hidden states (1024-dim)
  *   2. A learned linear projection to 12 EMA channels (MNGU0 coordinate space)
- *   3. YIN pitch detection and RMS loudness
+ *   3. LPC-based F1 (first formant) estimation for lip positioning
+ *   4. YIN pitch detection and RMS loudness
+ *
+ * Returns to the main thread: articulationFeatures (6 x,y z-score pairs),
+ * pitch, loudness, and f1 (Hz).
  *
  * Python equivalent (Speech-Articulatory-Coding):
  *   - Audio z-score normalization and 160-sample zero-padding
@@ -18,6 +22,8 @@
  *     results than an approximate Gaussian filter)
  *   - Pitch via YIN (Python uses CREPE or PENN)
  *   - Loudness via RMS-to-dB (Python uses amplitude pooling)
+ *   - F1 estimation via LPC (not in original Python pipeline; used by the
+ *     client to drive lip vertical separation)
  ******************************************************************************/
 
 function workerDebugLog(message, data = null) {

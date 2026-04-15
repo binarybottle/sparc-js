@@ -15,8 +15,17 @@ features. This is a JavaScript port of the feature extraction pipeline from
    12 EMA (electromagnetic articulography) channels in the MNGU0 coordinate
    space: tongue dorsum, tongue body, tongue tip, lower incisor, upper lip,
    and lower lip (x, y each).
-4. **Visualization** — Six colored markers on an SVG grid, plus pitch,
-   loudness, and jaw-opening bar displays.
+4. **F1 estimation** — LPC-based first formant frequency estimation (in the
+   worker), used to drive lip vertical separation since the model's lip
+   channels lack sufficient vowel differentiation.
+5. **Visualization** — Six colored markers on an SVG grid representing
+   tongue (TD, TB, TT), lower incisor (LI), and lips (UL, LL).
+
+Tongue and LI positions are driven by the model's z-scores with
+per-articulator-group display scales. Lip vertical positions (mouth
+opening) are driven by F1, not the model's UL/LL output. See
+[MNGU0_COORDINATES.md](MNGU0_COORDINATES.md) for the full display
+transform.
 
 The FP32 ONNX model produces output that is numerically identical to the
 original PyTorch model (average difference < 0.00001). See
@@ -33,12 +42,27 @@ original PyTorch model (average difference < 0.00001). See
 - **Frame selection** uses the second-to-last frame for lower latency
   (Python uses the middle frame for offline analysis).
 
+## Features
+
+- **Set References** — A normal speaker dictates individual vowels; the app
+  captures speaker-specific F1 values and saves them to `localStorage` for
+  persistent reference targets.
+- **Calibrate** — Reads a passage aloud to collect per-speaker audio
+  normalization statistics and per-articulator mean z-scores.
+- **Test Sounds** — Displays phonetically-motivated reference positions for
+  /i/, /e/, /a/, /o/, /u/ with correct tongue shapes and F1-driven lip gaps.
+- **Live Recording** — Real-time marker positions from model inference
+  (tongue/LI) and F1 estimation (lips).
+
 ## File structure
 
 ```
-app.js                  Core: audio capture, worker management, feature loop
-visualization.js        Visualization: SVG markers, demo animation, controls
-sparc-worker.js         Web Worker: WavLM + linear model inference, YIN pitch
+app.js                  Core: audio capture, worker management, display
+                        transform, F1-to-lip mapping, calibration, Set References
+visualization.js        Visualization: SVG markers, demo animation, vowel
+                        reference positions, controls
+sparc-worker.js         Web Worker: WavLM + linear model inference, LPC F1
+                        estimation, YIN pitch detection
 index.html              Main application page
 validation.html         Standalone page for comparing JS output with Python
 server.py               Local HTTP server with CORS headers
@@ -53,7 +77,10 @@ prep/                             Model conversion scripts
   convert_pytorch2onnx_truncate9layers_quantize.py
   convert_wavlm_large_to_onnx.py
 
-tests/
+tests/                            Offline analysis tools (not used at runtime)
+  extract_vowel_zscores.py        Extract model z-scores from vowel audio
+  vowel_zscores.json              Cached extraction output
+  vowels/                         Synthetic vowel audio files
   validate_features.py            Python ground truth extraction
   python_features.json            Cached Python features for sample1.wav
   sample1.wav                     Test audio file

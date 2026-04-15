@@ -2,7 +2,12 @@
  * SPARC Visualization - Vocal Tract Display
  *
  * Renders articulatory feature positions as colored markers on an SVG grid.
- * Also handles demo animation and smoothing control.
+ * Manages phonetically-motivated vowel reference positions (VOWEL_Z_SCORES),
+ * demo animation, test sound display, and smoothing controls.
+ *
+ * Reference tongue/LI positions come from EMA literature (not from the
+ * model). Reference lip positions are driven by F1 (canonical or captured
+ * via Set References). See MNGU0_COORDINATES.md for the full display transform.
  *
  * Depends on global state from app.js:
  *   smoothedFeatures, featureHistory, debugCounters,

@@ -91,3 +91,13 @@ Most values fall within approximately -3 to +3.
 
 These features are auxiliary (not part of the core EMA pipeline) and are used
 only for visualization.
+
+## Display note
+
+The accuracy tables above compare **raw model output** (z-scores). In the
+browser UI, tongue and LI positions are derived from these z-scores via
+per-articulator-group display scales. However, **lip vertical positions (UL/LL
+y) are driven by F1** (first formant frequency, estimated via LPC), not the
+model's `ul_y`/`ll_y` output, because the model's lip channels do not
+differentiate vowels well enough for clinical use. See
+[MNGU0_COORDINATES.md](MNGU0_COORDINATES.md) for details.

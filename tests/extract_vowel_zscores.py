@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Extract per-vowel z-scored EMA values using the ONNX pipeline.
+"""Offline tool: extract per-vowel z-scored EMA values using the ONNX pipeline.
+
+NOTE: This script is for offline analysis only. The browser app does NOT use
+its output at runtime. Reference vowel positions in the app come from
+phonetically-motivated values in visualization.js (VOWEL_Z_SCORES).
 
 Replicates the exact JS worker pipeline:
   1. Z-score normalize audio (full-file, matching Python SPARC convention)
