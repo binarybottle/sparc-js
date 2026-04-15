@@ -7,9 +7,9 @@
  * Depends on global state from app.js:
  *   smoothedFeatures, featureHistory, debugCounters,
  *   smoothingFactor, isRecording, animationRunning, animationFrame,
- *   DISPLAY_MIN, DISPLAY_MAX, MNGU0_STATS, emaToDisplay,
- *   scaleToDisplay, clampToDisplay, updateFeatureHistory,
- *   calculateJawOpening, updateStatus, debugLog
+ *   DISPLAY_MIN, DISPLAY_MAX, ARTICULATOR_CENTERS, DISPLAY_SCALES,
+ *   emaToDisplay, f1ToLipPositions, scaleToDisplay, clampToDisplay,
+ *   updateFeatureHistory, calculateJawOpening, updateStatus, debugLog
  ******************************************************************************/
 
 /******************************************************************************
@@ -206,32 +206,80 @@ function initializeDefaultPositions() {
   }
 }
 
-// Vowel z-scores (approximate articulatory targets in MNGU0 z-scored space).
-// Converted to display coordinates via emaToDisplay() at load time so they
-// share the same MNGU0-based transform as live model output.
+// Phonetically-motivated tongue z-scores for reference vowel positions.
+// These reflect known articulatory patterns from EMA literature:
+//   /i/: tongue body bunched high and front (TB is peak)
+//   /e/: similar to /i/ but less extreme
+//   /a/: tongue flat and low (no peak)
+//   /o/: tongue body raised in back, less extreme than /u/
+//   /u/: tongue dorsum raised high in back (TD is peak)
+// UL/LL z-scores are ignored (scale = 0); lip y is F1-driven.
+// _f1 values are canonical first-formant frequencies (Hz) for adult speakers
+// (Peterson & Barney, 1952).
 const VOWEL_Z_SCORES = {
-  'i': { td:{x: 1.0,y: 1.5}, tb:{x: 1.0,y: 1.5}, tt:{x: 0.5,y: 0.5},
-         li:{x: 0,  y: 0.5}, ul:{x: 0,  y: 0},    ll:{x: 0,  y: 0.5} },
-  'e': { td:{x: 0.5,y: 0.5}, tb:{x: 0.5,y: 0.5}, tt:{x: 0.3,y: 0},
-         li:{x: 0,  y:-0.3}, ul:{x: 0,  y: 0},    ll:{x: 0,  y:-0.3} },
-  'a': { td:{x:-0.5,y:-1.5}, tb:{x:-0.3,y:-1.0}, tt:{x:-0.5,y:-1.0},
-         li:{x: 0,  y:-1.5}, ul:{x: 0,  y: 0.3},  ll:{x: 0,  y:-1.5} },
-  'o': { td:{x:-1.0,y: 0.5}, tb:{x:-0.8,y: 0.3}, tt:{x:-0.3,y:-0.3},
-         li:{x: 0,  y:-0.5}, ul:{x: 0.5,y:-0.3},  ll:{x: 0.5,y:-0.5} },
-  'u': { td:{x:-1.0,y: 1.5}, tb:{x:-0.8,y: 1.0}, tt:{x:-0.3,y: 0.3},
-         li:{x: 0,  y: 0.3}, ul:{x: 0.5,y:-0.3},  ll:{x: 0.5,y: 0.3} }
+  'i': { td:{x:-0.3,y: 0.5}, tb:{x: 0.5,y: 1.5}, tt:{x: 0.8,y: 0.8},
+         li:{x: 0.0,y: 1.0}, ul:{x:0,y:0}, ll:{x:0,y:0}, _f1: 270 },
+  'e': { td:{x:-0.2,y: 0.2}, tb:{x: 0.3,y: 0.8}, tt:{x: 0.5,y: 0.4},
+         li:{x: 0.0,y: 0.3}, ul:{x:0,y:0}, ll:{x:0,y:0}, _f1: 530 },
+  'a': { td:{x:-0.2,y:-1.2}, tb:{x: 0.0,y:-1.0}, tt:{x: 0.2,y:-0.5},
+         li:{x: 0.0,y:-1.0}, ul:{x:0,y:0}, ll:{x:0,y:0}, _f1: 730 },
+  'o': { td:{x:-0.5,y: 0.3}, tb:{x:-0.3,y: 0.2}, tt:{x: 0.0,y:-0.2},
+         li:{x: 0.0,y:-0.3}, ul:{x:0,y:0}, ll:{x:0,y:0}, _f1: 570 },
+  'u': { td:{x:-0.8,y: 1.0}, tb:{x:-0.5,y: 0.8}, tt:{x:-0.2,y: 0.2},
+         li:{x: 0.0,y: 0.8}, ul:{x:0,y:0}, ll:{x:0,y:0}, _f1: 300 }
 };
 
-const VOWEL_POSITIONS = {};
-for (const [vowel, zScores] of Object.entries(VOWEL_Z_SCORES)) {
-  VOWEL_POSITIONS[vowel] = {};
-  for (const key of ['ul', 'll', 'li', 'tt', 'tb', 'td']) {
-    VOWEL_POSITIONS[vowel][key] = emaToDisplay(key, zScores[key].x, zScores[key].y);
+let VOWEL_POSITIONS = {};
+function rebuildVowelPositions(zScoresMap) {
+  for (const [vowel, zScores] of Object.entries(zScoresMap)) {
+    VOWEL_POSITIONS[vowel] = {};
+    for (const key of ['ul', 'll', 'li', 'tt', 'tb', 'td']) {
+      VOWEL_POSITIONS[vowel][key] = emaToDisplay(key, zScores[key].x, zScores[key].y);
+    }
+    // Use F1 to drive lip vertical positions when available
+    const f1 = zScores._f1 || 0;
+    if (f1 > 0) {
+      const lip = f1ToLipPositions(f1);
+      VOWEL_POSITIONS[vowel].ul.y = lip.ulY;
+      VOWEL_POSITIONS[vowel].ll.y = lip.llY;
+    }
+    const ulY = VOWEL_POSITIONS[vowel].ul.y;
+    const llY = VOWEL_POSITIONS[vowel].ll.y;
+    VOWEL_POSITIONS[vowel].jaw_opening = Math.min(1, Math.max(0,
+      (Math.abs(llY - ulY) - 1.5) / 3));
   }
-  const ulY = VOWEL_POSITIONS[vowel].ul.y;
-  const llY = VOWEL_POSITIONS[vowel].ll.y;
-  VOWEL_POSITIONS[vowel].jaw_opening = Math.min(1, Math.max(0,
-    (Math.abs(llY - ulY) - 1.5) / 3));
+}
+rebuildVowelPositions(VOWEL_Z_SCORES);
+
+/**
+ * Apply learned references from Set References or localStorage.
+ * Tongue and LI positions always come from the phonetically-motivated
+ * VOWEL_Z_SCORES (the model's tongue channels don't differentiate shapes
+ * well enough). Only the speaker-specific F1 value is taken from the
+ * learned data, since F1 is an acoustically reliable signal.
+ */
+function applyLearnedReferences(refs) {
+  for (const [vowel, articulators] of Object.entries(refs)) {
+    if (!VOWEL_Z_SCORES[vowel]) continue;
+    const base = VOWEL_Z_SCORES[vowel];
+
+    VOWEL_POSITIONS[vowel] = {};
+    for (const key of ['ul', 'll', 'li', 'tt', 'tb', 'td']) {
+      VOWEL_POSITIONS[vowel][key] = emaToDisplay(key, base[key].x, base[key].y);
+    }
+
+    // Use speaker-specific F1 if captured, otherwise fall back to canonical
+    const f1 = (articulators._f1 && articulators._f1 > 0) ? articulators._f1 : (base._f1 || 0);
+    if (f1 > 0) {
+      const lip = f1ToLipPositions(f1);
+      VOWEL_POSITIONS[vowel].ul.y = lip.ulY;
+      VOWEL_POSITIONS[vowel].ll.y = lip.llY;
+    }
+    const ulY = VOWEL_POSITIONS[vowel].ul.y;
+    const llY = VOWEL_POSITIONS[vowel].ll.y;
+    VOWEL_POSITIONS[vowel].jaw_opening = Math.min(1, Math.max(0,
+      (Math.abs(llY - ulY) - 1.5) / 3));
+  }
 }
 
 function testArticulatorAnimation() {

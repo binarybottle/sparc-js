@@ -82,6 +82,25 @@ let calibrationWorkletNode = null;
 let calibrationTimer = null;
 let calibrationStartTime = 0;
 
+// Set-references state
+let isSettingRefs = false;
+let setRefAudioContext = null;
+let setRefAudioStream = null;
+let setRefWorkletNode = null;
+let setRefTimer = null;
+let setRefFrames = [];         // collected raw z-score frames for current vowel
+let setRefResults = {};        // accumulated { vowel: { art: {x,y} } }
+const SET_REF_VOWELS = [
+  { id: 'i', label: '/i/', desc: 'Say "ee" as in "see"' },
+  { id: 'e', label: '/e/', desc: 'Say "eh" as in "bed"' },
+  { id: 'a', label: '/a/', desc: 'Say "ah" as in "father"' },
+  { id: 'o', label: '/o/', desc: 'Say "oh" as in "go"' },
+  { id: 'u', label: '/u/', desc: 'Say "oo" as in "food"' }
+];
+let setRefVowelIndex = 0;
+let setRefCapturing = false;   // true while mic is live for current vowel
+const SET_REF_STORAGE_KEY = 'sparc-reference-positions';
+
 /******************************************************************************
  * UTILITY FUNCTIONS
  ******************************************************************************/
@@ -252,34 +271,61 @@ async function initSparcWorker() {
   });
 }
 
-// MNGU0 EMA anatomical statistics (approximate, in mm).
-// The SPARC model outputs z-scored EMA: each channel is z-scored within
-// utterances during MNGU0 training (Cho et al. 2024, §III-A). To recover
-// anatomical positions we un-z-score using per-channel means (average
-// sensor position in mm) and stds (typical within-utterance displacement).
-//
-// Coordinate frame: origin ≈ upper incisors, +x = anterior, +y = superior.
-// Values estimated from the MNGU0 corpus (Richmond et al. 2011) and
-// consistent with published EMA analyses of the dataset.
-const MNGU0_STATS = {
-  td: { mx: -28, my:  5,  sx: 3.5, sy: 3.0 },
-  tb: { mx: -15, my:  3,  sx: 4.0, sy: 4.0 },
-  tt: { mx:   0, my: -3,  sx: 5.0, sy: 4.5 },
-  li: { mx:   0, my: -10, sx: 1.0, sy: 2.0 },
-  ul: { mx:   4, my:  4,  sx: 1.2, sy: 0.8 },
-  ll: { mx:   4, my: -3,  sx: 1.5, sy: 2.0 }
+// Anatomical center of each articulator in SVG coordinates at z-score = 0.
+const ARTICULATOR_CENTERS = {
+  td: { x: -4.0, y: -3.2 },   // tongue dorsum: far back, up
+  tb: { x: -2.0, y: -2.5 },   // tongue body: mid-back, up
+  tt: { x:  0.5, y: -0.3 },   // tongue tip: mid, mid-height
+  li: { x:  2.0, y:  0.0 },   // lower incisor: front, midline (tracks jaw)
+  ul: { x:  3.0, y: -1.25 },  // upper lip: frontmost (y set by F1, center unused)
+  ll: { x:  3.0, y: -1.25 }   // lower lip: frontmost (y set by F1, center unused)
 };
 
-// Map model z-scores → real mm → SVG display coordinates.
-// mm_x ∈ [−35, 10] → svg_x ∈ [−5, 4]  (BACK → FRONT)
-// mm_y ∈ [−15, 10] → svg_y ∈ [ 4,−5]  (DOWN → UP, flipped for SVG)
+// Per-articulator-group display scales (SVG units per z-score unit).
+// Tongue uses large scales now that lips are F1-driven and won't overlap.
+// Lips use zero scale — their y is F1-driven, x is fixed at center.
+const DISPLAY_SCALES = {
+  td: { x: 0.8, y: 1.2 },
+  tb: { x: 0.8, y: 1.2 },
+  tt: { x: 0.8, y: 1.2 },
+  li: { x: 0.5, y: 1.0 },
+  ul: { x: 0.0, y: 0.0 },
+  ll: { x: 0.0, y: 0.0 }
+};
+
+// Map model z-scores to SVG display coordinates.
 function emaToDisplay(key, z_x, z_y) {
-  const s = MNGU0_STATS[key];
-  const mm_x = z_x * s.sx + s.mx;
-  const mm_y = z_y * s.sy + s.my;
+  const c = ARTICULATOR_CENTERS[key];
+  const s = DISPLAY_SCALES[key];
   return {
-    x: (mm_x + 35) / 45 * 9 - 5,
-    y: (10 - mm_y) / 25 * 9 - 5
+    x: c.x + z_x * s.x,
+    y: c.y - z_y * s.y   // flip: MNGU0 +y = superior, SVG +y = down
+  };
+}
+
+/******************************************************************************
+ * F1-DRIVEN LIP POSITIONING
+ *
+ * The SPARC model's UL/LL channels don't differentiate vowels well.
+ * F1 (first formant frequency) correlates strongly with mouth opening:
+ *   /i/ ≈ 270 Hz (closed) → /a/ ≈ 730 Hz (open)
+ *
+ * We use F1 to drive the vertical gap between UL and LL, keeping their
+ * x-positions fixed at the lip center.
+ ******************************************************************************/
+
+const F1_CLOSED_HZ = 250;    // F1 at lips-nearly-touching (high vowels)
+const F1_OPEN_HZ   = 650;    // F1 at mouth wide open (accounts for male speakers)
+const LIP_CENTER_Y = -1.25;  // midpoint between original UL/LL centers
+const LIP_HALF_GAP_CLOSED = 0.3;   // SVG half-gap when mouth closed
+const LIP_HALF_GAP_OPEN   = 1.8;   // SVG half-gap when mouth wide open
+
+function f1ToLipPositions(f1Hz) {
+  const t = Math.max(0, Math.min(1, (f1Hz - F1_CLOSED_HZ) / (F1_OPEN_HZ - F1_CLOSED_HZ)));
+  const halfGap = LIP_HALF_GAP_CLOSED + t * (LIP_HALF_GAP_OPEN - LIP_HALF_GAP_CLOSED);
+  return {
+    ulY: LIP_CENTER_Y - halfGap,   // upper lip moves up (more negative SVG y)
+    llY: LIP_CENTER_Y + halfGap    // lower lip moves down (more positive SVG y)
   };
 }
 
@@ -292,7 +338,18 @@ function handleWorkerFeatures(message) {
       throw new Error('No articulation features in message');
     }
 
-    const { articulationFeatures, pitch, loudness } = message;
+    const { articulationFeatures, pitch, loudness, f1 } = message;
+
+    // Collect raw z-scores + F1 for set-references mode before any transform
+    if (setRefCapturing) {
+      const rawFrame = { f1: f1 || 0 };
+      for (const key of ['ul', 'll', 'li', 'tt', 'tb', 'td']) {
+        if (articulationFeatures[key]) {
+          rawFrame[key] = { x: articulationFeatures[key].x, y: articulationFeatures[key].y };
+        }
+      }
+      setRefFrames.push(rawFrame);
+    }
 
     for (const key of ['ul', 'll', 'li', 'tt', 'tb', 'td']) {
       if (!articulationFeatures[key] ||
@@ -309,6 +366,19 @@ function handleWorkerFeatures(message) {
       const disp = emaToDisplay(key, zx, zy);
       articulationFeatures[key].x = disp.x;
       articulationFeatures[key].y = disp.y;
+    }
+
+    // Override UL/LL vertical positions with F1-driven mouth opening
+    if (f1 > 0) {
+      const lip = f1ToLipPositions(f1);
+      articulationFeatures.ul.y = lip.ulY;
+      articulationFeatures.ll.y = lip.llY;
+    }
+
+    // Periodic F1 diagnostic (every 10th frame)
+    if (debugCounters.featuresUpdated % 10 === 0 && f1 > 0) {
+      const t = Math.max(0, Math.min(1, (f1 - F1_CLOSED_HZ) / (F1_OPEN_HZ - F1_CLOSED_HZ)));
+      debugLog(`F1: ${f1.toFixed(0)} Hz → opening ${(t * 100).toFixed(0)}%`);
     }
 
     updateFeatureHistory(articulationFeatures, pitch || 0, loudness || -60);
@@ -647,6 +717,230 @@ function handleCalibrationProgress(message) {
 }
 
 /******************************************************************************
+ * SET REFERENCE SOUNDS
+ *
+ * Steps through each vowel. For each, the (normal) speaker says the sound
+ * for a few seconds while the model captures raw z-score output. The average
+ * z-scores become the reference positions for that vowel, persisted in
+ * localStorage so they survive page refreshes.
+ ******************************************************************************/
+
+function showSetRefOverlay() {
+  const overlay = document.getElementById('setref-overlay');
+  if (!overlay) return;
+  setRefVowelIndex = 0;
+  setRefResults = {};
+  updateSetRefUI();
+  overlay.style.display = 'block';
+  document.getElementById('setref-start').style.display = '';
+  document.getElementById('setref-next').style.display = 'none';
+  document.getElementById('setref-progress-bar-container').style.display = 'none';
+  document.getElementById('setref-status').textContent = '';
+}
+
+function hideSetRefOverlay() {
+  const overlay = document.getElementById('setref-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function updateSetRefUI() {
+  const v = SET_REF_VOWELS[setRefVowelIndex];
+  const label = document.getElementById('setref-vowel-label');
+  const desc = document.getElementById('setref-vowel-desc');
+  if (label) label.textContent = v ? v.label : '';
+  if (desc) desc.textContent = v ? v.desc : '';
+}
+
+async function startSetRefCapture() {
+  if (!workerInitialized) { alert('Models not loaded yet.'); return; }
+
+  try {
+    animationRunning = false;
+    if (animationFrame) { clearTimeout(animationFrame); animationFrame = null; }
+
+    SparcWorker.postMessage({ type: 'calibrate_start' });
+
+    setRefAudioStream = await navigator.mediaDevices.getUserMedia({
+      audio: { sampleRate: config.targetSampleRate, channelCount: 1,
+               echoCancellation: true, noiseSuppression: true }
+    });
+
+    setRefAudioContext = new (window.AudioContext || window.webkitAudioContext)({
+      sampleRate: config.targetSampleRate
+    });
+
+    config.deviceSampleRate = setRefAudioContext.sampleRate;
+    config.bufferSize = setRefAudioContext.sampleRate;
+    audioBuffer = new Float32Array(config.bufferSize);
+    audioBufferIndex = 0;
+
+    if (setRefAudioContext.audioWorklet) {
+      const blob = new Blob([audioProcessorCode], { type: 'application/javascript' });
+      await setRefAudioContext.audioWorklet.addModule(URL.createObjectURL(blob));
+      setRefWorkletNode = new AudioWorkletNode(setRefAudioContext, 'audio-processor');
+      setRefWorkletNode.port.onmessage = (event) => {
+        if (event.data.audio) processAudioData(event.data.audio);
+      };
+      const source = setRefAudioContext.createMediaStreamSource(setRefAudioStream);
+      source.connect(setRefWorkletNode);
+    } else {
+      const source = setRefAudioContext.createMediaStreamSource(setRefAudioStream);
+      const processor = setRefAudioContext.createScriptProcessor(config.frameSize, 1, 1);
+      processor.onaudioprocess = (event) => {
+        processAudioData(event.inputBuffer.getChannelData(0));
+      };
+      source.connect(processor);
+      const silentGain = setRefAudioContext.createGain();
+      silentGain.gain.value = 0;
+      processor.connect(silentGain);
+      silentGain.connect(setRefAudioContext.destination);
+      setRefWorkletNode = processor;
+    }
+
+    isSettingRefs = true;
+    setRefCapturing = true;
+    setRefFrames = [];
+
+    document.getElementById('setref-start').style.display = 'none';
+    document.getElementById('setref-next').style.display = '';
+    document.getElementById('setref-progress-bar-container').style.display = '';
+    document.getElementById('setref-status').textContent =
+      `Speak now: ${SET_REF_VOWELS[setRefVowelIndex].desc}`;
+
+    setRefTimer = setInterval(sendSetRefAudio, config.updateInterval);
+  } catch (error) {
+    debugLog('Set-ref start error', error);
+    document.getElementById('setref-status').textContent = 'Error: ' + error.message;
+  }
+}
+
+function sendSetRefAudio() {
+  if (!isSettingRefs || !workerInitialized) return;
+  if (pendingWorkerResponses >= 1) return;
+
+  const recentAudio = getRecentAudioBuffer();
+  if (!recentAudio || recentAudio.length === 0) return;
+  if (!audioHasSpeechEnergy(recentAudio)) return;
+
+  SparcWorker.postMessage({
+    type: 'process',
+    audio: new Float32Array(recentAudio),
+    config: config,
+    deviceSampleRate: config.deviceSampleRate || config.targetSampleRate
+  });
+  pendingWorkerResponses++;
+}
+
+function finishCurrentVowel() {
+  const vowel = SET_REF_VOWELS[setRefVowelIndex];
+
+  if (setRefFrames.length < 3) {
+    document.getElementById('setref-status').textContent =
+      'Not enough speech detected. Keep speaking and try again.';
+    return;
+  }
+
+  const avg = {};
+  for (const key of ['ul', 'll', 'li', 'tt', 'tb', 'td']) {
+    let sx = 0, sy = 0, n = 0;
+    for (const frame of setRefFrames) {
+      if (frame[key] && isFinite(frame[key].x) && isFinite(frame[key].y)) {
+        sx += frame[key].x;
+        sy += frame[key].y;
+        n++;
+      }
+    }
+    avg[key] = n > 0 ? { x: sx / n, y: sy / n } : { x: 0, y: 0 };
+  }
+
+  // Average F1 across captured frames
+  let f1Sum = 0, f1Count = 0;
+  for (const frame of setRefFrames) {
+    if (frame.f1 && frame.f1 > 0) { f1Sum += frame.f1; f1Count++; }
+  }
+  avg._f1 = f1Count > 0 ? f1Sum / f1Count : 0;
+
+  setRefResults[vowel.id] = avg;
+  debugLog(`Reference captured for /${vowel.id}/`, { frames: setRefFrames.length, avg });
+
+  setRefVowelIndex++;
+  setRefFrames = [];
+
+  if (setRefVowelIndex >= SET_REF_VOWELS.length) {
+    finishSetRef();
+    return;
+  }
+
+  updateSetRefUI();
+  const pct = (setRefVowelIndex / SET_REF_VOWELS.length) * 100;
+  document.getElementById('setref-progress-bar').style.width = pct + '%';
+  document.getElementById('setref-status').textContent =
+    `Speak now: ${SET_REF_VOWELS[setRefVowelIndex].desc}`;
+}
+
+function finishSetRef() {
+  stopSetRefAudio();
+
+  localStorage.setItem(SET_REF_STORAGE_KEY, JSON.stringify(setRefResults));
+  debugLog('Reference positions saved', setRefResults);
+
+  if (typeof applyLearnedReferences === 'function') {
+    applyLearnedReferences(setRefResults);
+  }
+
+  hideSetRefOverlay();
+  updateStatus('References set. Ready.');
+
+  const btn = document.getElementById('setRefButton');
+  if (btn) {
+    btn.textContent = 'Re-set References';
+    btn.classList.replace('btn-info', 'btn-outline-info');
+  }
+}
+
+function stopSetRefAudio() {
+  setRefCapturing = false;
+  isSettingRefs = false;
+  if (setRefTimer) { clearInterval(setRefTimer); setRefTimer = null; }
+  if (setRefAudioStream) {
+    setRefAudioStream.getTracks().forEach(t => t.stop());
+    setRefAudioStream = null;
+  }
+  if (setRefWorkletNode) { setRefWorkletNode.disconnect(); setRefWorkletNode = null; }
+  if (setRefAudioContext) { setRefAudioContext.close(); setRefAudioContext = null; }
+}
+
+function cancelSetRef() {
+  stopSetRefAudio();
+  SparcWorker.postMessage({ type: 'reset_stats' });
+  hideSetRefOverlay();
+}
+
+function loadSavedReferences() {
+  try {
+    const saved = localStorage.getItem(SET_REF_STORAGE_KEY);
+    if (!saved) return false;
+    const refs = JSON.parse(saved);
+    if (refs && typeof refs === 'object' && Object.keys(refs).length > 0) {
+      if (typeof applyLearnedReferences === 'function') {
+        applyLearnedReferences(refs);
+      }
+      debugLog('Loaded saved reference positions', refs);
+
+      const btn = document.getElementById('setRefButton');
+      if (btn) {
+        btn.textContent = 'Re-set References';
+        btn.classList.replace('btn-info', 'btn-outline-info');
+      }
+      return true;
+    }
+  } catch (e) {
+    debugLog('Error loading saved references', e);
+  }
+  return false;
+}
+
+/******************************************************************************
  * AUDIO RECORDING
  ******************************************************************************/
 
@@ -781,6 +1075,8 @@ async function init() {
     if (typeof setupCharts === 'function') setupCharts();
     if (typeof setupSensitivityControls === 'function') setupSensitivityControls();
 
+    loadSavedReferences();
+
     const startBtn = document.getElementById('startButton');
     const stopBtn = document.getElementById('stopButton');
     if (startBtn) {
@@ -790,6 +1086,19 @@ async function init() {
     if (stopBtn) {
       stopBtn.addEventListener('click', stopRecording);
     }
+
+    // Set References UI wiring
+    const setRefBtn = document.getElementById('setRefButton');
+    if (setRefBtn) {
+      setRefBtn.disabled = false;
+      setRefBtn.addEventListener('click', showSetRefOverlay);
+    }
+    const srStart = document.getElementById('setref-start');
+    if (srStart) srStart.addEventListener('click', startSetRefCapture);
+    const srNext = document.getElementById('setref-next');
+    if (srNext) srNext.addEventListener('click', finishCurrentVowel);
+    const srCancel = document.getElementById('setref-cancel');
+    if (srCancel) srCancel.addEventListener('click', cancelSetRef);
 
     // Calibration UI wiring
     const calibBtn = document.getElementById('calibrateButton');
